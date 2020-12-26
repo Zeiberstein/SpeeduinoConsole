@@ -293,6 +293,8 @@ void loop() {
   if (engineStarted) {
     // lcd.clear();
 
+  // TODO The Coolant temperature is not the same as the temperature shown in TunerStudio. Probably a bug on my side.
+
     lcdprint( 1, 0, message[RPM_HB] * 255 + message[RPM_LB], "%4d rpm   ");
     lcdprint(12, 0, convertFtoC(message[COOLANT_PLUS_OFFSET]),  TEMPERATURE_FORMAT  );  // convert Fahrenheid to Celsius
 
