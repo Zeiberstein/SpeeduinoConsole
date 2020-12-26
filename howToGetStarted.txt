@@ -1,0 +1,25 @@
+The Speeduino can react on commands given on its serial ports. One of those ports is Speeduino’s usb port. This is also the port TunerStudio uses to communicate. 
+
+Personally, I didn’t want to use that usb port. I prefer to use the usb cable only for TunerStudio and use another port for reading values with another Arduino. No hassle with changing cables.
+
+Speeduino has a “secondary” port. But you have to enable it in ‘Accessories’ in TunerStudio! (See enableSecondarySerialInterface.png)
+
+To make things complicated, Speeduino’s secondary port is associated with Arduino Mega’s “Serial3”. Mega’s serial3 can be found on the Mega pins 14 (transmit) and 15 (receive). 
+See pinoutMega2560.png for their location.
+
+You mission, should you choose to accept it, is to locate these pins on your Speeduino board and solder wires on. In connectingPin14and15.jpg you can see what I did.
+
+I preferred to protect the ports with resistors with a value of 10 k. The rationale is that if you accidentally short-circuit a wire no damage will be done. Since for the communication only very small currents are used, a resistor does no harm. 
+I added two dupont pins for easy removal of the wires to the helper-arduino. 
+
+The code for the helper Arduino can be found in SpeeduinoConsole.ino. 
+In there you can read that in the helper-arduino uses its pins 10 (receive) and 11 (transmit). The transmitter from the Speeduino (blue wire) must be connected with the receiver of the helper-arduino. The other (green wire) connects the receiver of the Speeduino with the transmitter of the helper. 
+
+In helperArduino.jpg you can get an idea of the wiring of the help-arduino. I’m not sure if it is of any help. You can see the L78S05 voltage regulator that powers the helper-arduino. (I already burnt the Speeduino regulator by overloading it, so this one gets his own regulator).
+Maybe you can see a white cable. That for future use (knock-detection).
+
+
+Stuff I bought:
+https://www.aliexpress.com/item/32920769382.html  (LCD Board 2004 20*4 LCD 20X4 3.3V/5V Blue/Yellow and Green Screen LCD2004 Display LCD Module LCD 2004 for arduino)
+https://www.aliexpress.com/item/2035880451.html   (IIC/I2C Interface LCD1602 Adapter Plate Board 5V LCD Adapter Converter Module For LCD1602 2004 LCD)
+https://www.aliexpress.com/item/4000235952850.html (Pro mini MEGA2560 <-- select the right board when ordering!)
