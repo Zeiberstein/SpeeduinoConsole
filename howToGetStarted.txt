@@ -13,10 +13,10 @@ I preferred to protect the ports with resistors with a value of 10 k. The ration
 I added two dupont pins for easy removal of the wires to the helper-arduino. 
 
 The code for the helper Arduino can be found in SpeeduinoConsole.ino. 
-In there you can read that the helper-arduino uses its pins 10 (receive) and 11 (transmit). The transmitter from the Speeduino (blue wire) must be connected with the receiver of the helper-arduino. The other (green wire) connects the receiver of the Speeduino with the transmitter of the helper. 
+In there you can read that the helper-arduino uses the pins 10 (receive) and 11 (transmit). The transmitter from the Speeduino (blue wire) must be connected with the receiver of the helper-arduino. The other (green wire) connects the receiver of the Speeduino with the transmitter of the helper. 
 
 In helperArduino.jpg you can get an idea of the wiring of the help-arduino. I’m not sure if it is of any help. You can see the L78S05 voltage regulator that powers the helper-arduino. (I already burned the Speeduino regulator by overloading it, so this one gets his own regulator).
-Maybe you can see a white cable. That for future use (knock-detection).
+Maybe you can see a white cable. That is for future use (knock-detection).
 
 
 Stuff I bought:

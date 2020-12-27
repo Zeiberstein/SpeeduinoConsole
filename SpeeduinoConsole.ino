@@ -5,7 +5,7 @@ LiquidCrystal_I2C lcd(0x27, 2, 1, 0, 4, 5, 6, 7, 3, POSITIVE);  // Set the LCD I
 SoftwareSerial mySerial2(10, 11); // RX, TX
 
 // Module for reading Speeduino's serial3 port and displaying it on a 20*4 character LCD 
-// Oct 2020, Lex Sewuster
+// Oct 2020, Lex Sewuster (aka Zeiberstein)
 //
 // See https://speeduino.com/wiki/index.php/Secondary_Serial_IO_interface
 //
@@ -70,8 +70,9 @@ const int  POLLING_INTERVAL = 1000;  // in ms
 
 
 // Character definition (only 8 possible with Hitachi HD44780) for the moving bar emulation. 
-// special characters are defined by their quadrans Upper-Left, Upper-Right, Lower-Left and Lower-Right.
-// A quadrant is always filled from left to right. 
+// special characters are defined by their quadrants Upper-Left, Upper-Right, Lower-Left and Lower-Right.
+// A quadrant is always filled from left to right. So it's not possible that a right quadrant is filled
+// and the quadrant on its left is not filled.
 
 // 1 quadrant in upper half, 0 quadrant in lower half
 byte CHAR10[8] = {
