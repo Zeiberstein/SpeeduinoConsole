@@ -13,11 +13,11 @@ SoftwareSerial mySerial2(10, 11); // RX, TX
 // https://www.aliexpress.com/item/32920769382.html  (LCD Board 2004 20*4 LCD 20X4 3.3V/5V Blue/Yellow and Gree Screen LCD2004 Display LCD Module LCD 2004 for arduino)
 // https://www.aliexpress.com/item/2035880451.html   (IIC/I2C Interface LCD1602 Adapter Plate Board 5V LCD Adapter Converter Module For LCD1602 2004 LCD)
 // 
-// An Arduino Uno is too slow to keep up with a linespeed of 110000 bps. I used a compact Mega2560
+// An Arduino Uno is too slow to keep up with a linespeed of 115200 bps. I used a compact Mega2560
 // https://www.aliexpress.com/item/4000235952850.html (Pro mini MEGA2560 <-- select the right board when ordering!)
 // (another reason for using an Mega2560 is that I might want to expand it with knock detection and NEO gps reading.  
 //
-// In this version i fiddled with moving bars of half character height for graphical displaying of the rpm's and fual-to-=air ratio's. 
+// In this version i fiddled with moving bars of half character height for graphical displaying of the rpm and air-fuel-ratio. 
 // This is still a work-in-progress. If one needs to focus on the serial IO and the displaying only, he/she could remove anything needed for the procedure 'lcdBar()'
 
 // Position numbers in Speeduino's Real time data block 
@@ -217,9 +217,8 @@ void setup() {
 
 // convert Fahrenheid to Celsius
 int convertFtoC( int f) {
-  return (int)( (f - 32) * 5 / 9);
+  return (int)( ((f - 32) * 5) / 9);
 }
-
 
 void lcdprint(byte col, byte row, int num, char fmt[]) {
   lcd.setCursor(col, row);
@@ -305,7 +304,7 @@ void loop() {
     lcdprint(14, 2, message[OXIGEN] % 10, "%01d afr");
 
     lcd.setCursor(0, 3);
-    lcdBar(float(message[RPM_HB] * 255 + message[RPM_LB]), 0.0, 7000.0, float(message[OXIGEN]) / 10.0, 10.0, 20.0, NUM_DISPLAY_COLS);   // Graphical display in moving bar of rpm en fta 
+    lcdBar(float(message[RPM_HB] * 255 + message[RPM_LB]), 0.0, 7000.0, float(message[OXIGEN]) / 10.0, 10.0, 20.0, NUM_DISPLAY_COLS);   // Graphical display in moving bar of rpm en afr 
   }
   else {
     if (message[RPM_HB] > 0 ) {
