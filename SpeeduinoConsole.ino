@@ -5,7 +5,12 @@ LiquidCrystal_I2C lcd(0x27, 2, 1, 0, 4, 5, 6, 7, 3, POSITIVE);  // Set the LCD I
 SoftwareSerial mySerial2(10, 11); // RX, TX
 
 // Module for reading Speeduino's serial3 port and displaying it on a 20*4 character LCD 
-// Oct 2020, Lex Sewuster (aka Zeiberstein)
+//
+// Lex Sewuster (aka Zeiberstein)
+// 20200918 | initial creation                                      
+// 20201021 | added moving bars
+// 20210103 | fixed temperature reading
+//
 //
 // See https://speeduino.com/wiki/index.php/Secondary_Serial_IO_interface
 //
@@ -27,10 +32,10 @@ const byte DWELL = 3;
 const byte MAP_LB = 4;
 const byte MAP_HB = 5;
 const byte IAT_PLUS_OFFSET = 6;
-const byte BATTERY10 = 9;
-const byte OXIGEN = 10;
 const byte COOLANT_PLUS_OFFSET = 7;
 const byte BAT_CORRECTION = 8;
+const byte BATTERY10 = 9;
+const byte OXIGEN = 10;
 const byte EGO_CORRECTION = 11;
 const byte IAT_CORRECTION = 12;
 const byte WUE_CORRECTION = 13;
@@ -63,7 +68,11 @@ const byte TEST_OUTPUTS = 38;
 const byte OXIGEN2 = 39;
 const byte BARO = 40;
 
+// An Arduino string cannot contain a degree symbol (°). Char arrays can. 
 const char TEMPERATURE_FORMAT[] = {'%', '3', 'd', ' ',  char(223), 'C', ' ', char(0)};
+const char ADVANCE_FORMAT[] = {'%', '3', 'd', ' ',  char(223), ' ', char(0)};
+
+const int  TEMPERATURE_OFFSET = 40; 
 
 const int  WAITING_INTERVAL =  100;  // in ms
 const int  POLLING_INTERVAL = 1000;  // in ms
@@ -205,6 +214,14 @@ void setup() {
   lcd.createChar(C12, CHAR12);
   lcd.createChar(C22, CHAR22);
 
+
+  lcd.setCursor(0, 0);  
+  lcd.print("Inspuiting wordt"); 
+  lcd.setCursor(0, 1);
+  lcd.print("    op druk gebracht");
+  delay( 5000 );
+  lcd.clear();
+  
   lcd.setCursor(0, 0);
   lcd.print("Lomax is klaar");
   lcd.backlight();
@@ -216,17 +233,11 @@ void setup() {
 
 }
 
-// convert Fahrenheid to Celsius
-int convertFtoC( int f) {
-  return (int)( ((f - 32) * 5) / 9);
-}
-
 void lcdprint(byte col, byte row, int num, char fmt[]) {
   lcd.setCursor(col, row);
   sprintf (numBuf, fmt, num);
   lcd.print(numBuf);
 }
-
 
 int activeCells (float value, float minValue, float maxValue, int num_cells) {
   float interval = (maxValue - minValue) / (num_cells + 1);
@@ -293,14 +304,12 @@ void loop() {
   if (engineStarted) {
     // lcd.clear();
 
-  // TODO The Coolant temperature is not the same as the temperature shown in TunerStudio. Probably a bug on my side.
-
     lcdprint( 1, 0, message[RPM_HB] * 255 + message[RPM_LB], "%4d rpm   ");
-    lcdprint(12, 0, convertFtoC(message[COOLANT_PLUS_OFFSET]),  TEMPERATURE_FORMAT  );  // convert Fahrenheid to Celsius
+    lcdprint(12, 0, message[ADVANCE_ANGLE], ADVANCE_FORMAT);
 
-    lcdprint( 1, 1, message[MAP_HB] * 255 + message[MAP_LB], "%4d kPa ");
-    lcdprint(12, 1, message[ADVANCE_ANGLE], "%3d deg ");
-
+    lcdprint( 1, 1, message[MAP_HB] * 255 + message[MAP_LB], "%4d kPa "); 
+    lcdprint(12, 1, ((int) message[COOLANT_PLUS_OFFSET]) - TEMPERATURE_OFFSET,  TEMPERATURE_FORMAT  );  
+    
     lcdprint(11, 2, message[OXIGEN] / 10, "%2d.");
     lcdprint(14, 2, message[OXIGEN] % 10, "%01d afr");
 
