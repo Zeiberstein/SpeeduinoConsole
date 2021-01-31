@@ -1,21 +1,30 @@
-The Speeduino can react on commands given on its serial ports. One of those ports is Speeduino’s usb port. This is also the port TunerStudio uses to communicate. 
+The Speeduino can react on commands given on its serial ports. One of those ports is Speeduino’s usb port. 
+This is also the port TunerStudio uses to communicate. 
 
-Personally, I didn’t want to use that usb port. I prefer to use the usb cable only for TunerStudio and use another port for reading values with another Arduino. No hassle with changing cables.
+Personally, I didn’t want to use that usb port. I prefer to use the usb cable only for TunerStudio and use another port 
+for reading values with another Arduino. No hassle with changing cables.
 
 Speeduino has a “secondary” port. You have to enable it in ‘Accessories’ in TunerStudio (See enableSecondarySerialInterface.png)
 
-To make things complicated, Speeduino’s secondary port is associated with Arduino Mega’s “Serial3” port. Mega’s Serial3 can be found on the Mega pins 14 (transmit) and 15 (receive). 
+To make things complicated, Speeduino’s secondary port is associated with Arduino Mega’s “Serial3” port. 
+Mega’s Serial3 can be found on the Mega pins 14 (transmit) and 15 (receive). 
 See pinoutMega2560.png for their location.
 
-You mission, should you choose to accept it, is to locate these pins on your Speeduino board and solder wires on them. In connectingPin14and15.jpg you can see what I did.
+You mission, should you choose to accept it, is to locate these pins on your Speeduino board and solder wires on them. 
+In connectingPin14and15.jpg you can see what I did.
 
-I preferred to protect the ports with resistors with a value of 10 k. The rationale is that if you accidentally short-circuit a wire no damage will be done. Since for the communication only very small currents are used, a resistor does no harm. 
+I preferred to protect the ports with resistors with a value of 10 k. The rationale is that if you accidentally short-circuit
+a wire no damage will be done. Since for the communication only very small currents are used, a resistor has no negative efect. 
 I added two dupont pins for easy removal of the wires to the helper-arduino. 
 
-The code for the helper Arduino can be found in SpeeduinoConsole.ino. 
-In there you can read that the helper-arduino uses the pins 10 (receive) and 11 (transmit). The transmitter from the Speeduino (blue wire) must be connected with the receiver of the helper-arduino. The other (green wire) connects the receiver of the Speeduino with the transmitter of the helper. 
+The code for the helper Arduino can be found in SpeeduinoConsole.ino. In there you can read that the helper-arduino 
+uses the pins 10 (receive) and 11 (transmit). 
+The transmitter from the Speeduino (blue wire) must be connected with the receiver of the helper-arduino. 
+The other (green wire) connects the receiver of the Speeduino with the transmitter of the helper. 
 
-In helperArduino.jpg you can get an idea of the wiring of the help-arduino. I’m not sure if it is of any help. You can see the L78S05 voltage regulator that powers the helper-arduino. (I already burned the Speeduino regulator by overloading it, so this one gets his own regulator).
+In helperArduino.jpg you can get an idea of the wiring of the help-arduino. I’m not sure if it is of any help. 
+You can see the L78S05 voltage regulator that powers the helper-arduino. (I already burned the Speeduino regulator 
+by overloading it, so this one gets his own regulator).
 Maybe you can see a white cable. That is for future use (knock-detection).
 
 

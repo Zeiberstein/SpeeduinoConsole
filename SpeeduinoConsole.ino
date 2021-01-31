@@ -4,10 +4,10 @@
 LiquidCrystal_I2C lcd(0x27, 2, 1, 0, 4, 5, 6, 7, 3, POSITIVE);  // Set the LCD I2C address
 SoftwareSerial mySerial2(10, 11); // RX, TX
 
-// Module for reading Speeduino's serial3 port and displaying it on a 20*4 character LCD 
+// Module for reading Speeduino's serial3 port and displaying it on a 20*4 character LCD
 //
 // Lex Sewuster (aka Zeiberstein)
-// 20200918 | initial creation                                      
+// 20200918 | initial creation
 // 20201021 | added moving bars
 // 20210103 | fixed temperature reading
 //
@@ -15,70 +15,93 @@ SoftwareSerial mySerial2(10, 11); // RX, TX
 // See https://speeduino.com/wiki/index.php/Secondary_Serial_IO_interface
 //
 // For displaying I used
-// https://www.aliexpress.com/item/32920769382.html  (LCD Board 2004 20*4 LCD 20X4 3.3V/5V Blue/Yellow and Gree Screen LCD2004 Display LCD Module LCD 2004 for arduino)
+// https://www.aliexpress.com/item/32920769382.html  (LCD Board 2004 20*4 LCD 20X4 3.3V/5V Blue/Yellow and Green Screen LCD2004 Display LCD Module LCD 2004 for arduino)
 // https://www.aliexpress.com/item/2035880451.html   (IIC/I2C Interface LCD1602 Adapter Plate Board 5V LCD Adapter Converter Module For LCD1602 2004 LCD)
-// 
+//
 // An Arduino Uno is too slow to keep up with a linespeed of 115200 bps. I used a compact Mega2560
 // https://www.aliexpress.com/item/4000235952850.html (Pro mini MEGA2560 <-- select the right board when ordering!)
-// (another reason for using an Mega2560 is that I might want to expand it with knock detection and NEO gps reading.  
+// (another reason for using an Mega2560 is that I might want to expand it with knock detection and NEO gps reading.
 //
-// In this version i fiddled with moving bars of half character height for graphical displaying of the rpm and air-fuel-ratio. 
+// In this version i fiddled with moving bars of half character height for graphical displaying of the rpm and air-fuel-ratio.
 // This is still a work-in-progress. If one needs to focus on the serial IO and the displaying only, he/she could remove anything needed for the procedure 'lcdBar()'
+//
+// 
+// For controlling the 4*20 LCD display I use fmalpartida’s LCD library. It can be found at at: https://github.com/fmalpartida/New-LiquidCrystal
+// To download: select “Code | download ZIP”
+// Unzip the file; copy the directory “New-LiquidCrystal-master” and its contents to the directory “libraries” in your Arduino IDE’s “sketch” directory.
+// Check your sketchbook directory is set in “Sketchbook location” in “Settings”, otherwise the this library won’t be found.  
+// 
+// For  the serial IO, SoftwareSerial is used. This is a library that is part of the Arduino IDE software (<install.dir>\ hardware\arduino\avr\libraries)
+//
+// This programma was developed with Arduino 1.9.0-beta IDE.
 
-// Position numbers in Speeduino's Real time data block 
-const byte SQUIRT = 1;
-const byte ENGINE = 2;
-const byte DWELL = 3;
-const byte MAP_LB = 4;
-const byte MAP_HB = 5;
-const byte IAT_PLUS_OFFSET = 6;
-const byte COOLANT_PLUS_OFFSET = 7;
-const byte BAT_CORRECTION = 8;
-const byte BATTERY10 = 9;
-const byte OXIGEN = 10;
-const byte EGO_CORRECTION = 11;
-const byte IAT_CORRECTION = 12;
-const byte WUE_CORRECTION = 13;
-const byte RPM_LB = 14;
-const byte RPM_HB = 15;
-const byte TAE_AMOUNT = 16;
-const byte CORRECTIONS = 17;
-const byte VE = 18;
 
-const byte AFR_TARGET = 19;
-const byte PW1_LB = 20;
-const byte PW1_HB = 21;
-const byte TPS_DOT = 22;
-const byte ADVANCE_ANGLE = 23;
-const byte TPS = 24;
-const byte LOOPS_PER_SECOND_LB = 25;
-const byte LOOPS_PER_SECOND_HB = 26;
-const byte FREE_RAM_LB = 27;
-const byte FREE_RAM_HB = 28;
-const byte BOOST_TARGET = 29;
-const byte BOOST_DUTY = 30;
-const byte SPARK = 31;
-const byte RPM_DOT_LB = 32;
-const byte RPM_DOT_HB = 33;
-const byte ETHANOL_PCT = 34;
-const byte FLEX_CORRECTION = 35;
-const byte FLEX_IGN_CORRECTION = 36;
-const byte IDLE_LOAD = 37;
-const byte TEST_OUTPUTS = 38;
-const byte OXIGEN2 = 39;
-const byte BARO = 40;
+// Position numbers in Speeduino's Real time data block
+#define SQUIRT               1
+#define ENGINE               2
+#define DWELL                3
+#define MAP_LB               4
+#define MAP_HB               5
+#define IAT_PLUS_OFFSET      6
+#define COOLANT_PLUS_OFFSET  7
+#define BAT_CORRECTION       8
+#define BATTERY10            9
+#define OXIGEN              10
+#define EGO_CORRECTION      11
+#define IAT_CORRECTION      12
+#define WUE_CORRECTION      13
+#define RPM_LB              14
+#define RPM_HB              15
+#define TAE_AMOUNT          16
+#define CORRECTIONS         17
+#define VE                  18
 
-// An Arduino string cannot contain a degree symbol (°). Char arrays can. 
-const char TEMPERATURE_FORMAT[] = {'%', '3', 'd', ' ',  char(223), 'C', ' ', char(0)};
-const char ADVANCE_FORMAT[] = {'%', '3', 'd', ' ',  char(223), ' ', char(0)};
+#define AFR_TARGET          19
+#define PW1_LB              20
+#define PW1_HB              21
+#define TPS_DOT             22
+#define ADVANCE_ANGLE       23
+#define TPS                 24
+#define LOOPS_PER_SECOND_LB 25
+#define LOOPS_PER_SECOND_HB 26
+#define FREE_RAM_LB         27
+#define FREE_RAM_HB         28
+#define BOOST_TARGET        29
+#define BOOST_DUTY          30
+#define SPARK               31
+#define RPM_DOT_LB          32
+#define RPM_DOT_HB          33
+#define ETHANOL_PCT         34
+#define FLEX_CORRECTION     35
+#define FLEX_IGN_CORRECTION 36
+#define IDLE_LOAD           37
+#define TEST_OUTPUTS        38
+#define OXIGEN2             39
+#define BARO                40
 
-const int  TEMPERATURE_OFFSET = 40; 
+#define BIT_ENGINE_RUN       0   // Engine running
+#define BIT_ENGINE_CRANK     1   // Engine cranking
+#define BIT_ENGINE_ASE       2   // after start enrichment (ASE)
+#define BIT_ENGINE_WARMUP    3   // Engine in warmup
+#define BIT_ENGINE_ACC       4   // in acceleration mode (TPS accel)
+#define BIT_ENGINE_DCC       5   // in deceleration mode
+#define BIT_ENGINE_MAPACC    6   // MAP acceleration mode
+#define BIT_ENGINE_MAPDCC    7   // MAP decelleration mode
+
+const char ENGINE_STATUS_CHAR[] = { 'R', 'C', 'A', 'W', 'a', 'd', '<', '>' };
+
+// An Arduino string cannot contain a degree symbol (°). Char arrays can.
+const char ADVANCE_FORMAT[] = {'%', '3', 'd', char(223), ' ', char(0)};
+//const char TEMPERATURE_FORMAT[] = {'%', '3', 'd', char(223), 'C', ' ', char(0)};
+
+
+const int  TEMPERATURE_OFFSET = 40;
 
 const int  WAITING_INTERVAL =  100;  // in ms
 const int  POLLING_INTERVAL = 1000;  // in ms
 
 
-// Character definition (only 8 possible with Hitachi HD44780) for the moving bar emulation. 
+// Character definition (only 8 possible with Hitachi HD44780) for the moving bar emulation.
 // special characters are defined by their quadrants Upper-Left, Upper-Right, Lower-Left and Lower-Right.
 // A quadrant is always filled from left to right. So it's not possible that a right quadrant is filled
 // and the quadrant on its left is not filled.
@@ -215,17 +238,19 @@ void setup() {
   lcd.createChar(C22, CHAR22);
 
 
-  lcd.setCursor(0, 0);  
-  lcd.print("Inspuiting wordt"); 
+  lcd.setCursor(0, 0);
+  lcd.print("Inspuiting wordt");
   lcd.setCursor(0, 1);
   lcd.print("    op druk gebracht");
-  delay( 5000 );
+  delay( 3000 );
   lcd.clear();
-  
+
   lcd.setCursor(0, 0);
   lcd.print("Lomax is klaar");
-  lcd.backlight();
+  delay(500);
 
+  lcd.backlight();
+  lcd.clear();
   // set the data rate for the SoftwareSerial port
   mySerial2.begin(115200);
 
@@ -237,6 +262,23 @@ void lcdprint(byte col, byte row, int num, char fmt[]) {
   lcd.setCursor(col, row);
   sprintf (numBuf, fmt, num);
   lcd.print(numBuf);
+}
+
+
+char * engineStatus(byte status) {
+  static char buf[7] = { ' ', ' ', ' ', ' ', ' ', ' ', '\0' };
+  int bufPos = 5;
+  // display the most stable parameters to the right.
+  for (int bitNr = BIT_ENGINE_RUN; bitNr <= BIT_ENGINE_MAPDCC;  bitNr++) {
+    if (status & (1 <<  bitNr)) {
+      buf[bufPos] = ENGINE_STATUS_CHAR[bitNr];
+      bufPos--;
+    }
+  }
+  for (int i = bufPos; i >= 0 ; i--) {
+    buf[i] = ' ';}
+  
+  return buf;
 }
 
 int activeCells (float value, float minValue, float maxValue, int num_cells) {
@@ -272,8 +314,8 @@ int numActiveCells(int pointer, int value) {
 void lcdRawBar(int p, int q, int num_cells) {
   int numTop, numBottom;
   for (int i = 1; i < num_cells; i = i + 2) {
-    numTop = numActiveCells(i,p);
-    numBottom = numActiveCells(i,q);
+    numTop = numActiveCells(i, p);
+    numBottom = numActiveCells(i, q);
     lcd.write( byte ( PATTERN[numTop][numBottom] ) );
   }  //for
 }
@@ -281,11 +323,11 @@ void lcdRawBar(int p, int q, int num_cells) {
 
 void loop() {
 
-  // Output an "A" to Speeduino 
+  // Output an "A" to Speeduino
   numberOfBytesRead = 0;
   mySerial2.print("A");
-  
-  // Do not wait longer than WAITING_INTERVAL milliseconds for the respons to complete. 
+
+  // Do not wait longer than WAITING_INTERVAL milliseconds for the respons to complete.
   start = millis();
   while ( (millis() - start) < WAITING_INTERVAL ) {
     while (mySerial2.available() != 0) {
@@ -298,30 +340,35 @@ void loop() {
       }
     }
   }
-  // TODO change the above character reading to interrupt driven reading of the full response to keep the processor free for other tasks. 
+  // TODO change the above character reading to interrupt driven reading of the full response to keep the processor free for other tasks.
 
 
-  if (engineStarted) {
+//  if (engineStarted) {
     // lcd.clear();
 
-    lcdprint( 1, 0, message[RPM_HB] * 255 + message[RPM_LB], "%4d rpm   ");
-    lcdprint(12, 0, message[ADVANCE_ANGLE], ADVANCE_FORMAT);
+    lcdprint( 0, 0, message[RPM_HB] * 255 + message[RPM_LB], "%4drpm ");
+    lcdprint( 8, 0, message[ADVANCE_ANGLE], ADVANCE_FORMAT);
+    lcdprint(12, 0, ((int) message[COOLANT_PLUS_OFFSET]) - TEMPERATURE_OFFSET,  "%3dC"  );
+    lcdprint(16, 0, ((int) message[IAT_PLUS_OFFSET]) - TEMPERATURE_OFFSET,  "%3dC"  );
 
-    lcdprint( 1, 1, message[MAP_HB] * 255 + message[MAP_LB], "%4d kPa "); 
-    lcdprint(12, 1, ((int) message[COOLANT_PLUS_OFFSET]) - TEMPERATURE_OFFSET,  TEMPERATURE_FORMAT  );  
-    
-    lcdprint(11, 2, message[OXIGEN] / 10, "%2d.");
-    lcdprint(14, 2, message[OXIGEN] % 10, "%01d afr");
+    lcdprint( 0, 1, message[MAP_HB] * 255 + message[MAP_LB], "%4dkPa ");
+    lcdprint( 8, 1, message[IDLE_LOAD], "%3d ");
+    lcdprint(12, 1, message[TPS], "%3d ");
+    lcdprint(16, 1, message[CORRECTIONS], "%3d%%");
+
+    lcdprint( 0, 2, message[OXIGEN] / 10, "%2d.");
+    lcdprint( 3, 2, message[OXIGEN] % 10, "%01dafr  ");
+    lcdprint(14, 2, engineStatus(message[ENGINE]), "%s");
 
     lcd.setCursor(0, 3);
-    lcdBar(float(message[RPM_HB] * 255 + message[RPM_LB]), 0.0, 7000.0, float(message[OXIGEN]) / 10.0, 10.0, 20.0, NUM_DISPLAY_COLS);   // Graphical display in moving bar of rpm en afr 
-  }
-  else {
-    if (message[RPM_HB] > 0 ) {
-      lcd.clear();
-      engineStarted = true;
-    }
-  } 
+    lcdBar(float(message[RPM_HB] * 255 + message[RPM_LB]), 0.0, 7000.0, float(message[OXIGEN]) / 10.0, 10.0, 20.0, NUM_DISPLAY_COLS);   // Graphical display in moving bar of rpm en afr
+ // }
+ // else {
+ //   if (message[RPM_HB] > 0 ) {
+ //     lcd.clear();
+ //     engineStarted = true;
+ //   }
+//  }
 
 
   // correct polling time for time needed for by reading and displaying
