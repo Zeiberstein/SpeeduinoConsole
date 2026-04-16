@@ -54,6 +54,15 @@ SpeeduinoPacketResult makePacketResult(byte statusCode) {
   return result;
 }
 
+void resetPacketBuffer() {
+  memset(packet, 0, sizeof(packet));
+  payloadLength = 0;
+}
+
+bool hasValidPacketHeader() {
+  return (packet[0] == 'n') && (packet[1] == '2');
+}
+
 SpeeduinoSnapshot decodeSpeeduinoSnapshot(const byte *payload) {
   SpeeduinoSnapshot snapshot;
 
@@ -158,8 +167,7 @@ SpeeduinoPacketResult requestAndReadPacket() {
   bool hasDiscardedBufferedBytes = false;
   unsigned long readStart = millis();
 
-  memset(packet, 0, sizeof(packet));
-  payloadLength = 0;
+  resetPacketBuffer();
 
   // Discard stale bytes from a previous read before requesting fresh data.
   readExtraCharsIfAny();
@@ -179,7 +187,7 @@ SpeeduinoPacketResult requestAndReadPacket() {
     bytesInPacket++;
 
     if (bytesInPacket == HEADER_SIZE) {
-      if ((packet[0] != 'n') || (packet[1] != '2')) {
+      if (!hasValidPacketHeader()) {
         readExtraCharsIfAny();
         return makePacketResult(PACKET_STATUS_HEADER_INVALID);
       }
