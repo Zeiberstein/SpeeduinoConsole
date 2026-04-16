@@ -100,6 +100,25 @@ bool hasCompleteExpectedPacket(int bytesInPacket, int expectedPacketSize) {
   return (expectedPacketSize >= HEADER_SIZE) && (bytesInPacket == expectedPacketSize);
 }
 
+byte packetStatusAfterRead(int bytesInPacket, int expectedPacketSize, bool hasDiscardedBufferedBytes) {
+  if (bytesInPacket < HEADER_SIZE) {
+    return PACKET_STATUS_HEADER_INCOMPLETE;
+  }
+
+  if (bytesInPacket < expectedPacketSize) {
+    return PACKET_STATUS_INCOMPLETE;
+  }
+
+  // This code assumes Speeduino's fixed-list "n2" payload keeps the existing field
+  // offsets stable and only ever grows with appended fields, not by removing fields
+  // before FUEL_PRESSURE.
+  if (hasDiscardedBufferedBytes) {
+    return PACKET_STATUS_TOO_LONG;
+  }
+
+  return PACKET_STATUS_OK;
+}
+
 SpeeduinoSnapshot decodeSpeeduinoSnapshot(const byte *payload) {
   SpeeduinoSnapshot snapshot;
 
@@ -236,22 +255,7 @@ SpeeduinoPacketResult requestAndReadPacket() {
   // Wait a little longer for unexpected trailing bytes and discard them if seen.
   hasDiscardedBufferedBytes = readExtraCharsIfAny();
 
-  if (bytesInPacket < HEADER_SIZE) {
-    return makePacketResult(PACKET_STATUS_HEADER_INCOMPLETE);
-  }
-
-  if (bytesInPacket < expectedPacketSize) {
-    return makePacketResult(PACKET_STATUS_INCOMPLETE);
-  }
-
-  // This code assumes Speeduino's fixed-list "n2" payload keeps the existing field
-  // offsets stable and only ever grows with appended fields, not by removing fields
-  // before FUEL_PRESSURE.
-  if (hasDiscardedBufferedBytes) {
-    return makePacketResult(PACKET_STATUS_TOO_LONG);
-  }
-
-  return makePacketResult(PACKET_STATUS_OK);
+  return makePacketResult(packetStatusAfterRead(bytesInPacket, expectedPacketSize, hasDiscardedBufferedBytes));
 }
 
 void waitUntilNextPoll(unsigned long cycleStart) {
