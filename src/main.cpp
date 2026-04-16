@@ -72,6 +72,34 @@ bool hasMinimumDisplayPayloadLength(byte packetPayloadLength) {
   return packetPayloadLength >= MIN_DISPLAY_PAYLOAD_LENGTH;
 }
 
+byte validatePacketHeaderAndSetExpectedSize(int &expectedPacketSize) {
+  if (!hasValidPacketHeader()) {
+    return PACKET_STATUS_HEADER_INVALID;
+  }
+
+  payloadLength = packet[2];
+  if (!canPayloadLengthFitPacketBuffer(payloadLength)) {
+    return PACKET_STATUS_OVERFLOW;
+  }
+  if (!hasMinimumDisplayPayloadLength(payloadLength)) {
+    return PACKET_STATUS_PAYLOAD_TOO_SHORT;
+  }
+
+  expectedPacketSize = HEADER_SIZE + payloadLength;
+  return PACKET_STATUS_OK;
+}
+
+void storeIncomingPacketByte(byte incomingByte, int &bytesInPacket) {
+  if (bytesInPacket < MAX_PACKET_SIZE) {
+    packet[bytesInPacket] = incomingByte;
+  }
+  bytesInPacket++;
+}
+
+bool hasCompleteExpectedPacket(int bytesInPacket, int expectedPacketSize) {
+  return (expectedPacketSize >= HEADER_SIZE) && (bytesInPacket == expectedPacketSize);
+}
+
 SpeeduinoSnapshot decodeSpeeduinoSnapshot(const byte *payload) {
   SpeeduinoSnapshot snapshot;
 
@@ -190,29 +218,17 @@ SpeeduinoPacketResult requestAndReadPacket() {
 
     incomingByte = speeduinoSerial.read();
 
-    if (bytesInPacket < MAX_PACKET_SIZE) {
-      packet[bytesInPacket] = incomingByte;
-    }
-    bytesInPacket++;
+    storeIncomingPacketByte(incomingByte, bytesInPacket);
 
     if (bytesInPacket == HEADER_SIZE) {
-      if (!hasValidPacketHeader()) {
+      byte headerStatusCode = validatePacketHeaderAndSetExpectedSize(expectedPacketSize);
+      if (headerStatusCode != PACKET_STATUS_OK) {
         readExtraCharsIfAny();
-        return makePacketResult(PACKET_STATUS_HEADER_INVALID);
+        return makePacketResult(headerStatusCode);
       }
-      payloadLength = packet[2];
-      if (!canPayloadLengthFitPacketBuffer(payloadLength)) {
-        readExtraCharsIfAny();
-        return makePacketResult(PACKET_STATUS_OVERFLOW);
-      }
-      if (!hasMinimumDisplayPayloadLength(payloadLength)) {
-        readExtraCharsIfAny();
-        return makePacketResult(PACKET_STATUS_PAYLOAD_TOO_SHORT);
-      }
-      expectedPacketSize = HEADER_SIZE + payloadLength;
     }
 
-    if ((expectedPacketSize >= HEADER_SIZE) && (bytesInPacket == expectedPacketSize)) {
+    if (hasCompleteExpectedPacket(bytesInPacket, expectedPacketSize)) {
       break;
     }
   }
