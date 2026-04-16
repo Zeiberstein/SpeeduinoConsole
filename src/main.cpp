@@ -1,5 +1,6 @@
 #include <Arduino.h>
 #include <LiquidCrystal_I2C.h>
+#include <SpeeduinoProtocol.h>
 #include <string.h>
 
 LiquidCrystal_I2C lcd(0x27, 2, 1, 0, 4, 5, 6, 7, 3, POSITIVE);
@@ -21,162 +22,56 @@ HardwareSerial &speeduinoSerial = Serial1;  // RX1 = 19, TX1 = 18
 //
 // See https://speeduino.com/wiki/index.php/Secondary_Serial_IO_interface
 
-// Zero-based byte positions in Speeduino's legacy fixed secondary-serial "n" payload.
-constexpr byte SECL                    =   0;
-constexpr byte STATUS1                 =   1;
-constexpr byte ENGINE_STATUS           =   2;
-constexpr byte DWELL_MS10              =   3;
-constexpr byte MAP_LOW                 =   4;
-constexpr byte MAP_HIGH                =   5;
-constexpr byte IAT_WITH_OFFSET         =   6;
-constexpr byte COOLANT_WITH_OFFSET     =   7;
-constexpr byte BAT_CORRECTION          =   8;
-constexpr byte BATTERY10               =   9;
-constexpr byte O2                      =  10;
-constexpr byte EGO_CORRECTION          =  11;
-constexpr byte IAT_CORRECTION          =  12;
-constexpr byte WUE_CORRECTION          =  13;
-constexpr byte RPM_LOW                 =  14;
-constexpr byte RPM_HIGH                =  15;
-constexpr byte AE_AMOUNT               =  16;
-constexpr byte CORRECTIONS             =  17;
-constexpr byte VE                      =  18;
-constexpr byte AFR_TARGET              =  19;
-constexpr byte PW1_LOW                 =  20;
-constexpr byte PW1_HIGH                =  21;
-constexpr byte TPS_DOT_DIV10           =  22;
-constexpr byte ADVANCE                 =  23;
-constexpr byte TPS                     =  24;
-constexpr byte LOOPS_PER_SECOND_LOW    =  25;
-constexpr byte LOOPS_PER_SECOND_HIGH   =  26;
-constexpr byte FREE_RAM_LOW            =  27;
-constexpr byte FREE_RAM_HIGH           =  28;
-constexpr byte BOOST_TARGET_DIV2       =  29;
-constexpr byte BOOST_DUTY_DIV100       =  30;
-constexpr byte STATUS2                 =  31;
-constexpr byte RPM_DOT_LOW             =  32;
-constexpr byte RPM_DOT_HIGH            =  33;
-constexpr byte ETHANOL_PCT             =  34;
-constexpr byte FLEX_CORRECTION         =  35;
-constexpr byte FLEX_IGN_CORRECTION     =  36;
-constexpr byte IDLE_VALVE              =  37;
-constexpr byte TEST_OUTPUTS            =  38;
-constexpr byte O2_2                    =  39;
-constexpr byte BARO                    =  40;
-constexpr byte CANIN_00_LOW            =  41;
-constexpr byte CANIN_00_HIGH           =  42;
-constexpr byte CANIN_01_LOW            =  43;
-constexpr byte CANIN_01_HIGH           =  44;
-constexpr byte CANIN_02_LOW            =  45;
-constexpr byte CANIN_02_HIGH           =  46;
-constexpr byte CANIN_03_LOW            =  47;
-constexpr byte CANIN_03_HIGH           =  48;
-constexpr byte CANIN_04_LOW            =  49;
-constexpr byte CANIN_04_HIGH           =  50;
-constexpr byte CANIN_05_LOW            =  51;
-constexpr byte CANIN_05_HIGH           =  52;
-constexpr byte CANIN_06_LOW            =  53;
-constexpr byte CANIN_06_HIGH           =  54;
-constexpr byte CANIN_07_LOW            =  55;
-constexpr byte CANIN_07_HIGH           =  56;
-constexpr byte CANIN_08_LOW            =  57;
-constexpr byte CANIN_08_HIGH           =  58;
-constexpr byte CANIN_09_LOW            =  59;
-constexpr byte CANIN_09_HIGH           =  60;
-constexpr byte CANIN_10_LOW            =  61;
-constexpr byte CANIN_10_HIGH           =  62;
-constexpr byte CANIN_11_LOW            =  63;
-constexpr byte CANIN_11_HIGH           =  64;
-constexpr byte CANIN_12_LOW            =  65;
-constexpr byte CANIN_12_HIGH           =  66;
-constexpr byte CANIN_13_LOW            =  67;
-constexpr byte CANIN_13_HIGH           =  68;
-constexpr byte CANIN_14_LOW            =  69;
-constexpr byte CANIN_14_HIGH           =  70;
-constexpr byte CANIN_15_LOW            =  71;
-constexpr byte CANIN_15_HIGH           =  72;
-constexpr byte TPS_ADC                 =  73;
-constexpr byte ERROR_FLAGS             =  74;
-constexpr byte LAUNCH_CORRECTION       =  75;
-constexpr byte PW2_LOW                 =  76;
-constexpr byte PW2_HIGH                =  77;
-constexpr byte PW3_LOW                 =  78;
-constexpr byte PW3_HIGH                =  79;
-constexpr byte PW4_LOW                 =  80;
-constexpr byte PW4_HIGH                =  81;
-constexpr byte STATUS3                 =  82;
-constexpr byte ENGINE_PROTECT_STATUS   =  83;
-constexpr byte FUEL_LOAD_LOW           =  84;
-constexpr byte FUEL_LOAD_HIGH          =  85;
-constexpr byte IGN_LOAD_LOW            =  86;
-constexpr byte IGN_LOAD_HIGH           =  87;
-constexpr byte INJ_ANGLE_LOW           =  88;
-constexpr byte INJ_ANGLE_HIGH          =  89;
-constexpr byte IDLE_VALVE_2            =  90;  // Duplicate legacy slot for Speeduino's idleLoad field.
-constexpr byte CL_IDLE_TARGET          =  91;
-constexpr byte MAP_DOT_DIV10           =  92;
-constexpr byte VVT1_ANGLE              =  93;
-constexpr byte VVT1_TARGET_ANGLE       =  94;
-constexpr byte VVT1_DUTY               =  95;
-constexpr byte FLEX_BOOST_COR_LOW      =  96;
-constexpr byte FLEX_BOOST_COR_HIGH     =  97;
-constexpr byte BARO_CORRECTION         =  98;
-constexpr byte ASE_VALUE               =  99;
-constexpr byte VSS_LOW                 = 100;
-constexpr byte VSS_HIGH                = 101;
-constexpr byte GEAR                    = 102;
-constexpr byte FUEL_PRESSURE           = 103;
-constexpr byte OIL_PRESSURE            = 104;
-constexpr byte WMI_PW                  = 105;
-constexpr byte STATUS4                 = 106;
-constexpr byte VVT2_ANGLE              = 107;
-constexpr byte VVT2_TARGET_ANGLE       = 108;
-constexpr byte VVT2_DUTY               = 109;
-constexpr byte OUTPUTS_STATUS          = 110;
-constexpr byte FUEL_TEMP_WITH_OFFSET   = 111;
-constexpr byte FUEL_TEMP_CORRECTION    = 112;
-constexpr byte VE1                     = 113;
-constexpr byte VE2                     = 114;
-constexpr byte ADVANCE1                = 115;
-constexpr byte ADVANCE2                = 116;
-constexpr byte NITROUS_STATUS          = 117;
-constexpr byte TS_SD_STATUS            = 118;
-constexpr byte EMAP_LOW                = 119;
-constexpr byte EMAP_HIGH               = 120;
-constexpr byte FAN_DUTY                = 121;
-constexpr byte AIRCON_STATUS           = 122;
-
-constexpr byte BIT_ENGINE_RUN          =   0;
-constexpr byte BIT_ENGINE_CRANK        =   1;
-constexpr byte BIT_ENGINE_ASE          =   2;
-constexpr byte BIT_ENGINE_WARMUP       =   3;
-constexpr byte BIT_ENGINE_ACC          =   4;
-constexpr byte BIT_ENGINE_DCC          =   5;
-constexpr byte BIT_ENGINE_MAPACC       =   6;
-constexpr byte BIT_ENGINE_MAPDCC       =   7;
-
-constexpr int TEMPERATURE_OFFSET = 40;
-constexpr unsigned long PACKET_READ_TIMEOUT = 100UL;
-constexpr unsigned long UNEXPECTED_BYTES_WAITING_INTERVAL = 5UL;
-constexpr unsigned long POLLING_INTERVAL = 1000UL;
-
-constexpr byte HEADER_SIZE = 3;
-constexpr byte PAYLOAD_OFFSET = HEADER_SIZE;  // packet[3] is payload byte 0.
-constexpr int MAX_PACKET_SIZE = 300;
-
-constexpr byte PACKET_STATUS_OK                = 0;
-constexpr byte PACKET_STATUS_OVERFLOW          = 1;
-constexpr byte PACKET_STATUS_HEADER_INCOMPLETE = 2;
-constexpr byte PACKET_STATUS_HEADER_INVALID    = 3;
-constexpr byte PACKET_STATUS_INCOMPLETE        = 4;
-constexpr byte PACKET_STATUS_TOO_LONG          = 5;
-
 constexpr int NUM_DISPLAY_COLS = 20;
 constexpr int NUM_DISPLAY_ROWS = 4;
 
+struct SpeeduinoPacketResult {
+  byte statusCode;
+  byte payloadLength;
+  const byte *payload;
+};
+
+struct SpeeduinoSnapshot {
+  uint16_t rpm;
+  byte advance;
+  int coolantC;
+  int iatC;
+  uint16_t mapKpa;
+  byte idleValve;
+  byte tps;
+  byte corrections;
+  byte afr10;
+  byte battery10;
+  byte engineStatusBits;
+  long fuelPressure10;
+};
+
 byte packet[MAX_PACKET_SIZE];  // More than enough for the maximum payload plus header.
-byte packetStatusCode = PACKET_STATUS_OK;
 byte payloadLength = 0;
+
+SpeeduinoPacketResult makePacketResult(byte statusCode) {
+  SpeeduinoPacketResult result = {statusCode, payloadLength, packet + PAYLOAD_OFFSET};
+  return result;
+}
+
+SpeeduinoSnapshot decodeSpeeduinoSnapshot(const byte *payload) {
+  SpeeduinoSnapshot snapshot;
+
+  snapshot.rpm = (uint16_t(payload[RPM_HIGH]) << 8) | payload[RPM_LOW];
+  snapshot.advance = payload[ADVANCE];
+  snapshot.coolantC = ((int)payload[COOLANT_WITH_OFFSET]) - TEMPERATURE_OFFSET;
+  snapshot.iatC = ((int)payload[IAT_WITH_OFFSET]) - TEMPERATURE_OFFSET;
+  snapshot.mapKpa = (uint16_t(payload[MAP_HIGH]) << 8) | payload[MAP_LOW];
+  snapshot.idleValve = payload[IDLE_VALVE];
+  snapshot.tps = payload[TPS];
+  snapshot.corrections = payload[CORRECTIONS];
+  snapshot.afr10 = payload[O2];
+  snapshot.battery10 = payload[BATTERY10];
+  snapshot.engineStatusBits = payload[ENGINE_STATUS];
+  snapshot.fuelPressure10 = (long(payload[FUEL_PRESSURE]) * 6895L + 5000L) / 10000L;
+
+  return snapshot;
+}
 
 void lcdprint(byte col, byte row, int num, const char *fmt) {
   static char numBuf[21];
@@ -221,6 +116,26 @@ const char *engineStatus(byte status) {
   return buf;
 }
 
+void renderSpeeduinoSnapshot(const SpeeduinoSnapshot &snapshot) {
+  lcdprint(0, 0, snapshot.rpm, "%4drpm ");
+  lcdprint(8, 0, snapshot.advance, "%3d\xDF ");  // The HD44780 LCD expects 0xDF for the degree symbol.
+  lcdprint(12, 0, snapshot.coolantC, "%3dC");
+  lcdprint(16, 0, snapshot.iatC, "%3dC");
+
+  lcdprint(0, 1, snapshot.mapKpa, "%4dkPa ");
+  lcdprint(8, 1, snapshot.idleValve, "%3d ");
+  lcdprint(12, 1, snapshot.tps, "%3d ");
+  lcdprint(16, 1, snapshot.corrections, "%3d%%");
+
+  lcdprintTenths(0, 2, snapshot.afr10, "afr ");
+  lcdprintTenths(8, 2, snapshot.battery10, "V ");
+  lcdprint(14, 2, engineStatus(snapshot.engineStatusBits));
+
+  lcdprintTenths(0, 3, snapshot.fuelPressure10, "bar            ", 1);
+
+  lcdprint(19, 3, " ");
+}
+
 bool readExtraCharsIfAny() {
   unsigned long readStart = millis();
   bool discardedBytes = false;
@@ -236,7 +151,7 @@ bool readExtraCharsIfAny() {
   return discardedBytes;
 }
 
-byte requestAndReadPacket() {
+SpeeduinoPacketResult requestAndReadPacket() {
   int bytesInPacket = 0;
   int expectedPacketSize = -1;
   byte incomingByte = 0;
@@ -266,7 +181,7 @@ byte requestAndReadPacket() {
     if (bytesInPacket == HEADER_SIZE) {
       if ((packet[0] != 'n') || (packet[1] != '2')) {
         readExtraCharsIfAny();
-        return PACKET_STATUS_HEADER_INVALID;
+        return makePacketResult(PACKET_STATUS_HEADER_INVALID);
       }
       payloadLength = packet[2];
       expectedPacketSize = HEADER_SIZE + packet[2];
@@ -281,21 +196,29 @@ byte requestAndReadPacket() {
   hasDiscardedBufferedBytes = readExtraCharsIfAny();
 
   if (bytesInPacket < HEADER_SIZE) {
-    return PACKET_STATUS_HEADER_INCOMPLETE;
+    return makePacketResult(PACKET_STATUS_HEADER_INCOMPLETE);
   }
 
   if (bytesInPacket < expectedPacketSize) {
-    return PACKET_STATUS_INCOMPLETE;
+    return makePacketResult(PACKET_STATUS_INCOMPLETE);
   }
 
   // This code assumes Speeduino's fixed-list "n2" payload keeps the existing field
   // offsets stable and only ever grows with appended fields, not by removing fields
   // before FUEL_PRESSURE.
   if (hasDiscardedBufferedBytes) {
-    return PACKET_STATUS_TOO_LONG;
+    return makePacketResult(PACKET_STATUS_TOO_LONG);
   }
 
-  return PACKET_STATUS_OK;
+  return makePacketResult(PACKET_STATUS_OK);
+}
+
+void waitUntilNextPoll(unsigned long cycleStart) {
+  while( millis() - cycleStart < POLLING_INTERVAL) {
+    // Wait until the polling interval has elapsed before starting the next cycle.
+    // This ensures a consistent update rate and prevents flooding the serial connection with requests.
+    delay(100);
+  }
 }
 
 void setup() {
@@ -320,38 +243,16 @@ void setup() {
 void loop() {
   unsigned long cycleStart = millis();
 
-  packetStatusCode = requestAndReadPacket();
+  SpeeduinoPacketResult packetResult = requestAndReadPacket();
 
-  if (packetStatusCode == PACKET_STATUS_OK) {
-    const byte *payload = packet + PAYLOAD_OFFSET;
-
-    lcdprint(0, 0, (uint16_t(payload[RPM_HIGH]) << 8) | payload[RPM_LOW], "%4drpm ");
-    lcdprint(8, 0, payload[ADVANCE], "%3d\xDF ");  // The HD44780 LCD expects 0xDF for the degree symbol.
-    lcdprint(12, 0, ((int)payload[COOLANT_WITH_OFFSET]) - TEMPERATURE_OFFSET, "%3dC");
-    lcdprint(16, 0, ((int)payload[IAT_WITH_OFFSET]) - TEMPERATURE_OFFSET, "%3dC");
-
-    lcdprint(0, 1, (uint16_t(payload[MAP_HIGH]) << 8) | payload[MAP_LOW], "%4dkPa ");
-    lcdprint(8, 1, payload[IDLE_VALVE], "%3d ");
-    lcdprint(12, 1, payload[TPS], "%3d ");
-    lcdprint(16, 1, payload[CORRECTIONS], "%3d%%");
-
-    lcdprintTenths(0, 2, payload[O2], "afr ");
-    lcdprintTenths(8, 2, payload[BATTERY10], "V ");
-    lcdprint(14, 2, engineStatus(payload[ENGINE_STATUS]));
-
-    long fuelPressure10 = (long(payload[FUEL_PRESSURE]) * 6895L + 5000L) / 10000L;
-    lcdprintTenths(0, 3, fuelPressure10, "bar            ", 1);
-
-    lcdprint(19, 3, " ");
+  if (packetResult.statusCode == PACKET_STATUS_OK) {
+    SpeeduinoSnapshot snapshot = decodeSpeeduinoSnapshot(packetResult.payload);
+    renderSpeeduinoSnapshot(snapshot);
   }
   else {
-    lcdprint(19, 3, packetStatusCode, "%1d");
+    lcdprint(19, 3, packetResult.statusCode, "%1d");
   }
 
-  while( millis() - cycleStart < POLLING_INTERVAL) {
-    // Wait until the polling interval has elapsed before starting the next cycle.
-    // This ensures a consistent update rate and prevents flooding the serial connection with requests.
-    delay(100);
-  }
+  waitUntilNextPoll(cycleStart);
   
 }
