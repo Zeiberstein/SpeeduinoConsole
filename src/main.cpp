@@ -24,6 +24,7 @@ HardwareSerial &speeduinoSerial = Serial1;  // RX1 = 19, TX1 = 18
 
 constexpr int NUM_DISPLAY_COLS = 20;
 constexpr int NUM_DISPLAY_ROWS = 4;
+constexpr byte MIN_DISPLAY_PAYLOAD_LENGTH = FUEL_PRESSURE + 1;
 
 struct SpeeduinoPacketResult {
   byte statusCode;
@@ -61,6 +62,14 @@ void resetPacketBuffer() {
 
 bool hasValidPacketHeader() {
   return (packet[0] == 'n') && (packet[1] == '2');
+}
+
+bool canPayloadLengthFitPacketBuffer(byte packetPayloadLength) {
+  return HEADER_SIZE + packetPayloadLength <= MAX_PACKET_SIZE;
+}
+
+bool hasMinimumDisplayPayloadLength(byte packetPayloadLength) {
+  return packetPayloadLength >= MIN_DISPLAY_PAYLOAD_LENGTH;
 }
 
 SpeeduinoSnapshot decodeSpeeduinoSnapshot(const byte *payload) {
@@ -192,7 +201,15 @@ SpeeduinoPacketResult requestAndReadPacket() {
         return makePacketResult(PACKET_STATUS_HEADER_INVALID);
       }
       payloadLength = packet[2];
-      expectedPacketSize = HEADER_SIZE + packet[2];
+      if (!canPayloadLengthFitPacketBuffer(payloadLength)) {
+        readExtraCharsIfAny();
+        return makePacketResult(PACKET_STATUS_OVERFLOW);
+      }
+      if (!hasMinimumDisplayPayloadLength(payloadLength)) {
+        readExtraCharsIfAny();
+        return makePacketResult(PACKET_STATUS_PAYLOAD_TOO_SHORT);
+      }
+      expectedPacketSize = HEADER_SIZE + payloadLength;
     }
 
     if ((expectedPacketSize >= HEADER_SIZE) && (bytesInPacket == expectedPacketSize)) {

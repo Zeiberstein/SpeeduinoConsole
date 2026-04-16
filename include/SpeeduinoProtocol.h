@@ -152,5 +152,6 @@ constexpr byte PACKET_STATUS_HEADER_INCOMPLETE = 2;
 constexpr byte PACKET_STATUS_HEADER_INVALID    = 3;
 constexpr byte PACKET_STATUS_INCOMPLETE        = 4;
 constexpr byte PACKET_STATUS_TOO_LONG          = 5;
+constexpr byte PACKET_STATUS_PAYLOAD_TOO_SHORT = 6;
 
 #endif
