@@ -288,6 +288,20 @@ void showStartupMessages() {
   waitWithBackgroundService(500);
 }
 
+SpeeduinoPacketResult pollSpeeduinoOnce() {
+  SpeeduinoPacketResult packetResult = requestAndReadPacket();
+
+  if (packetResult.statusCode == PACKET_STATUS_OK) {
+    SpeeduinoSnapshot snapshot = decodeSpeeduinoSnapshot(packetResult.payload);
+    renderSpeeduinoSnapshot(snapshot);
+  }
+  else {
+    lcdprint(19, 3, packetResult.statusCode, "%1d");
+  }
+
+  return packetResult;
+}
+
 void setup() {
   lcd.begin(NUM_DISPLAY_COLS, NUM_DISPLAY_ROWS);
 
@@ -301,15 +315,7 @@ void setup() {
 void loop() {
   unsigned long cycleStart = millis();
 
-  SpeeduinoPacketResult packetResult = requestAndReadPacket();
-
-  if (packetResult.statusCode == PACKET_STATUS_OK) {
-    SpeeduinoSnapshot snapshot = decodeSpeeduinoSnapshot(packetResult.payload);
-    renderSpeeduinoSnapshot(snapshot);
-  }
-  else {
-    lcdprint(19, 3, packetResult.statusCode, "%1d");
-  }
+  pollSpeeduinoOnce();
 
   waitUntilNextPoll(cycleStart);
   
