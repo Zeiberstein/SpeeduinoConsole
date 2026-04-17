@@ -64,9 +64,20 @@ struct SpeeduinoReadState {
   unsigned long readStart;
 };
 
+enum SpeeduinoPollPhase {
+  SPEEDUINO_POLL_PHASE_IDLE,
+  SPEEDUINO_POLL_PHASE_READING_PACKET
+};
+
+struct SpeeduinoPollState {
+  SpeeduinoPollPhase phase;
+  SpeeduinoPacketResult packetResult;
+};
+
 byte packet[MAX_PACKET_SIZE];  // More than enough for the maximum payload plus header.
 byte payloadLength = 0;
 SpeeduinoReadState speeduinoReadState;
+SpeeduinoPollState speeduinoPollState;
 unsigned long lastSpeeduinoPollMillis = 0;
 
 SpeeduinoPacketResult makePacketResult(byte statusCode) {
@@ -299,26 +310,18 @@ SpeeduinoPacketResult finishSpeeduinoPacketRead(SpeeduinoReadState &readState) {
   ));
 }
 
-SpeeduinoPacketResult requestAndReadPacket() {
-  resetSpeeduinoReadState(speeduinoReadState, millis());
-
-  startSpeeduinoPacketRequest(speeduinoReadState);
-
-  // Read until the expected packet length is complete or the timeout expires.
-  while (
-    (speeduinoReadState.phase == SPEEDUINO_READ_PHASE_READING_PACKET) &&
-    ((millis() - speeduinoReadState.readStart) < PACKET_READ_TIMEOUT)
-  ) {
-    if (serviceSpeeduinoPacketReadStep(speeduinoReadState)) {
-      if (speeduinoReadState.statusCode != PACKET_STATUS_OK) {
-        readExtraCharsIfAny();
-        return makePacketResult(speeduinoReadState.statusCode);
-      }
-      break;
-    }
+SpeeduinoPacketResult finishSpeeduinoPacketReadWithCurrentStatus(SpeeduinoReadState &readState) {
+  if (readState.statusCode != PACKET_STATUS_OK) {
+    readState.phase = SPEEDUINO_READ_PHASE_DONE;
+    readExtraCharsIfAny();
+    return makePacketResult(readState.statusCode);
   }
 
-  return finishSpeeduinoPacketRead(speeduinoReadState);
+  return finishSpeeduinoPacketRead(readState);
+}
+
+bool hasSpeeduinoPacketReadTimedOut(const SpeeduinoReadState &readState, unsigned long now) {
+  return (now - readState.readStart) >= PACKET_READ_TIMEOUT;
 }
 
 void waitWithBackgroundService(unsigned long durationMs) {
@@ -341,9 +344,7 @@ void showStartupMessages() {
   waitWithBackgroundService(500);
 }
 
-SpeeduinoPacketResult pollSpeeduinoOnce() {
-  SpeeduinoPacketResult packetResult = requestAndReadPacket();
-
+void renderSpeeduinoPacketResult(const SpeeduinoPacketResult &packetResult) {
   if (packetResult.statusCode == PACKET_STATUS_OK) {
     SpeeduinoSnapshot snapshot = decodeSpeeduinoSnapshot(packetResult.payload);
     renderSpeeduinoSnapshot(snapshot);
@@ -351,8 +352,38 @@ SpeeduinoPacketResult pollSpeeduinoOnce() {
   else {
     lcdprint(19, 3, packetResult.statusCode, "%1d");
   }
+}
 
-  return packetResult;
+void completeSpeeduinoPoll(const SpeeduinoPacketResult &packetResult) {
+  speeduinoPollState.packetResult = packetResult;
+  speeduinoPollState.phase = SPEEDUINO_POLL_PHASE_IDLE;
+  renderSpeeduinoPacketResult(speeduinoPollState.packetResult);
+}
+
+void startSpeeduinoPoll(unsigned long now) {
+  lastSpeeduinoPollMillis = now;
+  resetSpeeduinoReadState(speeduinoReadState, millis());
+  startSpeeduinoPacketRequest(speeduinoReadState);
+  speeduinoPollState.phase = SPEEDUINO_POLL_PHASE_READING_PACKET;
+}
+
+void serviceActiveSpeeduinoPoll() {
+  while (speeduinoPollState.phase == SPEEDUINO_POLL_PHASE_READING_PACKET) {
+    unsigned long now = millis();
+    if (hasSpeeduinoPacketReadTimedOut(speeduinoReadState, now)) {
+      completeSpeeduinoPoll(finishSpeeduinoPacketRead(speeduinoReadState));
+      return;
+    }
+
+    if (speeduinoSerial.available() == 0) {
+      return;
+    }
+
+    if (serviceSpeeduinoPacketReadStep(speeduinoReadState)) {
+      completeSpeeduinoPoll(finishSpeeduinoPacketReadWithCurrentStatus(speeduinoReadState));
+      return;
+    }
+  }
 }
 
 bool isSpeeduinoPollDue(unsigned long now) {
@@ -360,13 +391,18 @@ bool isSpeeduinoPollDue(unsigned long now) {
 }
 
 void serviceSpeeduinoPoll() {
+  if (speeduinoPollState.phase == SPEEDUINO_POLL_PHASE_READING_PACKET) {
+    serviceActiveSpeeduinoPoll();
+    return;
+  }
+
   unsigned long now = millis();
   if (!isSpeeduinoPollDue(now)) {
     return;
   }
 
-  lastSpeeduinoPollMillis = now;
-  pollSpeeduinoOnce();
+  startSpeeduinoPoll(now);
+  serviceActiveSpeeduinoPoll();
 }
 
 void setup() {
