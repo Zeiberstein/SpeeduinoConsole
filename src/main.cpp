@@ -64,13 +64,27 @@ struct SpeeduinoReadState {
   unsigned long readStart;
 };
 
+struct SpeeduinoSerialFlushState {
+  bool hasDiscardedBufferedBytes;
+  unsigned long flushStart;
+};
+
 enum SpeeduinoPollPhase {
   SPEEDUINO_POLL_PHASE_IDLE,
-  SPEEDUINO_POLL_PHASE_READING_PACKET
+  SPEEDUINO_POLL_PHASE_FLUSHING_STALE_BYTES,
+  SPEEDUINO_POLL_PHASE_READING_PACKET,
+  SPEEDUINO_POLL_PHASE_FLUSHING_TRAILING_BYTES
+};
+
+enum SpeeduinoPollFinishMode {
+  SPEEDUINO_POLL_FINISH_PACKET_STATUS,
+  SPEEDUINO_POLL_FINISH_CURRENT_STATUS
 };
 
 struct SpeeduinoPollState {
   SpeeduinoPollPhase phase;
+  SpeeduinoPollFinishMode finishMode;
+  SpeeduinoSerialFlushState flushState;
   SpeeduinoPacketResult packetResult;
 };
 
@@ -261,20 +275,18 @@ void idleBackgroundService() {
   delay(BACKGROUND_SERVICE_IDLE_DELAY);
 }
 
-bool readExtraCharsIfAny() {
-  unsigned long readStart = millis();
-  bool discardedBytes = false;
+void startSpeeduinoSerialFlush(SpeeduinoSerialFlushState &flushState, unsigned long now) {
+  flushState.hasDiscardedBufferedBytes = false;
+  flushState.flushStart = now;
+}
 
-  while ((millis() - readStart) < UNEXPECTED_BYTES_WAITING_INTERVAL) {
-    if (speeduinoSerial.available() == 0) {
-      idleBackgroundService();
-      continue;
-    }
-    discardedBytes = true;
+bool serviceSpeeduinoSerialFlush(SpeeduinoSerialFlushState &flushState, unsigned long now) {
+  while (speeduinoSerial.available() > 0) {
+    flushState.hasDiscardedBufferedBytes = true;
     speeduinoSerial.read();
   }
 
-  return discardedBytes;
+  return (now - flushState.flushStart) >= UNEXPECTED_BYTES_WAITING_INTERVAL;
 }
 
 bool serviceSpeeduinoPacketReadStep(SpeeduinoReadState &readState) {
@@ -288,20 +300,13 @@ bool serviceSpeeduinoPacketReadStep(SpeeduinoReadState &readState) {
 
 void startSpeeduinoPacketRequest(SpeeduinoReadState &readState) {
   readState.phase = SPEEDUINO_READ_PHASE_STARTING_REQUEST;
-  resetPacketBuffer();
-
-  // Discard stale bytes from a previous read before requesting fresh data.
-  readExtraCharsIfAny();
   speeduinoSerial.print("n");
 
   readState.phase = SPEEDUINO_READ_PHASE_READING_PACKET;
 }
 
-SpeeduinoPacketResult finishSpeeduinoPacketRead(SpeeduinoReadState &readState) {
+SpeeduinoPacketResult makeSpeeduinoPacketResultFromReadState(SpeeduinoReadState &readState) {
   readState.phase = SPEEDUINO_READ_PHASE_DONE;
-
-  // Wait a little longer for unexpected trailing bytes and discard them if seen.
-  readState.hasDiscardedBufferedBytes = readExtraCharsIfAny();
 
   return makePacketResult(packetStatusAfterRead(
     readState.bytesInPacket,
@@ -310,14 +315,9 @@ SpeeduinoPacketResult finishSpeeduinoPacketRead(SpeeduinoReadState &readState) {
   ));
 }
 
-SpeeduinoPacketResult finishSpeeduinoPacketReadWithCurrentStatus(SpeeduinoReadState &readState) {
-  if (readState.statusCode != PACKET_STATUS_OK) {
-    readState.phase = SPEEDUINO_READ_PHASE_DONE;
-    readExtraCharsIfAny();
-    return makePacketResult(readState.statusCode);
-  }
-
-  return finishSpeeduinoPacketRead(readState);
+SpeeduinoPacketResult makeSpeeduinoPacketResultFromCurrentStatus(SpeeduinoReadState &readState) {
+  readState.phase = SPEEDUINO_READ_PHASE_DONE;
+  return makePacketResult(readState.statusCode);
 }
 
 bool hasSpeeduinoPacketReadTimedOut(const SpeeduinoReadState &readState, unsigned long now) {
@@ -362,25 +362,70 @@ void completeSpeeduinoPoll(const SpeeduinoPacketResult &packetResult) {
 
 void startSpeeduinoPoll(unsigned long now) {
   lastSpeeduinoPollMillis = now;
-  resetSpeeduinoReadState(speeduinoReadState, millis());
-  startSpeeduinoPacketRequest(speeduinoReadState);
-  speeduinoPollState.phase = SPEEDUINO_POLL_PHASE_READING_PACKET;
+  resetSpeeduinoReadState(speeduinoReadState, now);
+  resetPacketBuffer();
+  startSpeeduinoSerialFlush(speeduinoPollState.flushState, now);
+  speeduinoPollState.phase = SPEEDUINO_POLL_PHASE_FLUSHING_STALE_BYTES;
+}
+
+void startSpeeduinoTrailingFlush(SpeeduinoPollFinishMode finishMode, unsigned long now) {
+  speeduinoPollState.finishMode = finishMode;
+  startSpeeduinoSerialFlush(speeduinoPollState.flushState, now);
+  speeduinoPollState.phase = SPEEDUINO_POLL_PHASE_FLUSHING_TRAILING_BYTES;
+}
+
+void completeSpeeduinoTrailingFlush() {
+  speeduinoReadState.hasDiscardedBufferedBytes = speeduinoPollState.flushState.hasDiscardedBufferedBytes;
+
+  if (speeduinoPollState.finishMode == SPEEDUINO_POLL_FINISH_CURRENT_STATUS) {
+    completeSpeeduinoPoll(makeSpeeduinoPacketResultFromCurrentStatus(speeduinoReadState));
+    return;
+  }
+
+  completeSpeeduinoPoll(makeSpeeduinoPacketResultFromReadState(speeduinoReadState));
 }
 
 void serviceActiveSpeeduinoPoll() {
-  while (speeduinoPollState.phase == SPEEDUINO_POLL_PHASE_READING_PACKET) {
+  while (speeduinoPollState.phase != SPEEDUINO_POLL_PHASE_IDLE) {
     unsigned long now = millis();
-    if (hasSpeeduinoPacketReadTimedOut(speeduinoReadState, now)) {
-      completeSpeeduinoPoll(finishSpeeduinoPacketRead(speeduinoReadState));
-      return;
+
+    if (speeduinoPollState.phase == SPEEDUINO_POLL_PHASE_FLUSHING_STALE_BYTES) {
+      if (!serviceSpeeduinoSerialFlush(speeduinoPollState.flushState, now)) {
+        return;
+      }
+
+      startSpeeduinoPacketRequest(speeduinoReadState);
+      speeduinoPollState.phase = SPEEDUINO_POLL_PHASE_READING_PACKET;
+      continue;
     }
 
-    if (speeduinoSerial.available() == 0) {
-      return;
+    if (speeduinoPollState.phase == SPEEDUINO_POLL_PHASE_READING_PACKET) {
+      if (hasSpeeduinoPacketReadTimedOut(speeduinoReadState, now)) {
+        startSpeeduinoTrailingFlush(SPEEDUINO_POLL_FINISH_PACKET_STATUS, now);
+        continue;
+      }
+
+      if (speeduinoSerial.available() == 0) {
+        return;
+      }
+
+      if (serviceSpeeduinoPacketReadStep(speeduinoReadState)) {
+        if (speeduinoReadState.statusCode != PACKET_STATUS_OK) {
+          startSpeeduinoTrailingFlush(SPEEDUINO_POLL_FINISH_CURRENT_STATUS, now);
+        }
+        else {
+          startSpeeduinoTrailingFlush(SPEEDUINO_POLL_FINISH_PACKET_STATUS, now);
+        }
+        continue;
+      }
     }
 
-    if (serviceSpeeduinoPacketReadStep(speeduinoReadState)) {
-      completeSpeeduinoPoll(finishSpeeduinoPacketReadWithCurrentStatus(speeduinoReadState));
+    if (speeduinoPollState.phase == SPEEDUINO_POLL_PHASE_FLUSHING_TRAILING_BYTES) {
+      if (!serviceSpeeduinoSerialFlush(speeduinoPollState.flushState, now)) {
+        return;
+      }
+
+      completeSpeeduinoTrailingFlush();
       return;
     }
   }
@@ -391,7 +436,7 @@ bool isSpeeduinoPollDue(unsigned long now) {
 }
 
 void serviceSpeeduinoPoll() {
-  if (speeduinoPollState.phase == SPEEDUINO_POLL_PHASE_READING_PACKET) {
+  if (speeduinoPollState.phase != SPEEDUINO_POLL_PHASE_IDLE) {
     serviceActiveSpeeduinoPoll();
     return;
   }
