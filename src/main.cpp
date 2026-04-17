@@ -66,6 +66,7 @@ struct SpeeduinoReadState {
 
 byte packet[MAX_PACKET_SIZE];  // More than enough for the maximum payload plus header.
 byte payloadLength = 0;
+SpeeduinoReadState speeduinoReadState;
 unsigned long lastSpeeduinoPollMillis = 0;
 
 SpeeduinoPacketResult makePacketResult(byte statusCode) {
@@ -299,26 +300,25 @@ SpeeduinoPacketResult finishSpeeduinoPacketRead(SpeeduinoReadState &readState) {
 }
 
 SpeeduinoPacketResult requestAndReadPacket() {
-  SpeeduinoReadState readState;
-  resetSpeeduinoReadState(readState, millis());
+  resetSpeeduinoReadState(speeduinoReadState, millis());
 
-  startSpeeduinoPacketRequest(readState);
+  startSpeeduinoPacketRequest(speeduinoReadState);
 
   // Read until the expected packet length is complete or the timeout expires.
   while (
-    (readState.phase == SPEEDUINO_READ_PHASE_READING_PACKET) &&
-    ((millis() - readState.readStart) < PACKET_READ_TIMEOUT)
+    (speeduinoReadState.phase == SPEEDUINO_READ_PHASE_READING_PACKET) &&
+    ((millis() - speeduinoReadState.readStart) < PACKET_READ_TIMEOUT)
   ) {
-    if (serviceSpeeduinoPacketReadStep(readState)) {
-      if (readState.statusCode != PACKET_STATUS_OK) {
+    if (serviceSpeeduinoPacketReadStep(speeduinoReadState)) {
+      if (speeduinoReadState.statusCode != PACKET_STATUS_OK) {
         readExtraCharsIfAny();
-        return makePacketResult(readState.statusCode);
+        return makePacketResult(speeduinoReadState.statusCode);
       }
       break;
     }
   }
 
-  return finishSpeeduinoPacketRead(readState);
+  return finishSpeeduinoPacketRead(speeduinoReadState);
 }
 
 void waitWithBackgroundService(unsigned long durationMs) {
