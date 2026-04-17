@@ -268,19 +268,30 @@ void waitUntilNextPoll(unsigned long cycleStart) {
   }
 }
 
-void setup() {
-  lcd.begin(NUM_DISPLAY_COLS, NUM_DISPLAY_ROWS);
+void waitWithBackgroundService(unsigned long durationMs) {
+  unsigned long waitStart = millis();
+  while ((millis() - waitStart) < durationMs) {
+    idleBackgroundService();
+  }
+}
 
+void showStartupMessages() {
   lcd.setCursor(0, 0);
   lcd.print("Inspuiting wordt");
   lcd.setCursor(0, 1);
   lcd.print("    op druk gebracht");
-  delay(3000);
+  waitWithBackgroundService(1000);
   lcd.clear();
 
   lcd.setCursor(0, 0);
   lcd.print("Lomax is klaar");
-  delay(500);
+  waitWithBackgroundService(500);
+}
+
+void setup() {
+  lcd.begin(NUM_DISPLAY_COLS, NUM_DISPLAY_ROWS);
+
+  showStartupMessages();
 
   lcd.backlight();
   lcd.clear();
