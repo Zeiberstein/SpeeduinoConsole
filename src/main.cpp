@@ -57,6 +57,7 @@ enum SpeeduinoReadPhase {
 
 struct SpeeduinoReadState {
   SpeeduinoReadPhase phase;
+  byte statusCode;
   int bytesInPacket;
   int expectedPacketSize;
   bool hasDiscardedBufferedBytes;
@@ -110,19 +111,19 @@ bool hasCompleteExpectedPacket(int bytesInPacket, int expectedPacketSize) {
   return (expectedPacketSize >= HEADER_SIZE) && (bytesInPacket == expectedPacketSize);
 }
 
-bool processIncomingPacketByte(SpeeduinoReadState &readState, byte incomingByte, byte &statusCode) {
+bool processIncomingPacketByte(SpeeduinoReadState &readState, byte incomingByte) {
   storeIncomingPacketByte(incomingByte, readState.bytesInPacket);
 
   if (readState.bytesInPacket == HEADER_SIZE) {
-    statusCode = validatePacketHeaderAndSetExpectedSize(readState.expectedPacketSize);
-    if (statusCode != PACKET_STATUS_OK) {
+    readState.statusCode = validatePacketHeaderAndSetExpectedSize(readState.expectedPacketSize);
+    if (readState.statusCode != PACKET_STATUS_OK) {
       readState.phase = SPEEDUINO_READ_PHASE_DONE;
       return true;
     }
   }
 
   if (hasCompleteExpectedPacket(readState.bytesInPacket, readState.expectedPacketSize)) {
-    statusCode = PACKET_STATUS_OK;
+    readState.statusCode = PACKET_STATUS_OK;
     readState.phase = SPEEDUINO_READ_PHASE_DONE;
     return true;
   }
@@ -255,13 +256,13 @@ bool readExtraCharsIfAny() {
   return discardedBytes;
 }
 
-bool serviceSpeeduinoPacketReadStep(SpeeduinoReadState &readState, byte &statusCode) {
+bool serviceSpeeduinoPacketReadStep(SpeeduinoReadState &readState) {
   if (speeduinoSerial.available() == 0) {
     idleBackgroundService();
     return false;
   }
 
-  return processIncomingPacketByte(readState, speeduinoSerial.read(), statusCode);
+  return processIncomingPacketByte(readState, speeduinoSerial.read());
 }
 
 void startSpeeduinoPacketRequest(SpeeduinoReadState &readState) {
@@ -275,26 +276,7 @@ void startSpeeduinoPacketRequest(SpeeduinoReadState &readState) {
   readState.phase = SPEEDUINO_READ_PHASE_READING_PACKET;
 }
 
-SpeeduinoPacketResult requestAndReadPacket() {
-  SpeeduinoReadState readState = {SPEEDUINO_READ_PHASE_IDLE, 0, -1, false, millis()};
-  byte statusCode = PACKET_STATUS_OK;
-
-  startSpeeduinoPacketRequest(readState);
-
-  // Read until the expected packet length is complete or the timeout expires.
-  while (
-    (readState.phase == SPEEDUINO_READ_PHASE_READING_PACKET) &&
-    ((millis() - readState.readStart) < PACKET_READ_TIMEOUT)
-  ) {
-    if (serviceSpeeduinoPacketReadStep(readState, statusCode)) {
-      if (statusCode != PACKET_STATUS_OK) {
-        readExtraCharsIfAny();
-        return makePacketResult(statusCode);
-      }
-      break;
-    }
-  }
-
+SpeeduinoPacketResult finishSpeeduinoPacketRead(SpeeduinoReadState &readState) {
   readState.phase = SPEEDUINO_READ_PHASE_DONE;
 
   // Wait a little longer for unexpected trailing bytes and discard them if seen.
@@ -305,6 +287,28 @@ SpeeduinoPacketResult requestAndReadPacket() {
     readState.expectedPacketSize,
     readState.hasDiscardedBufferedBytes
   ));
+}
+
+SpeeduinoPacketResult requestAndReadPacket() {
+  SpeeduinoReadState readState = {SPEEDUINO_READ_PHASE_IDLE, PACKET_STATUS_OK, 0, -1, false, millis()};
+
+  startSpeeduinoPacketRequest(readState);
+
+  // Read until the expected packet length is complete or the timeout expires.
+  while (
+    (readState.phase == SPEEDUINO_READ_PHASE_READING_PACKET) &&
+    ((millis() - readState.readStart) < PACKET_READ_TIMEOUT)
+  ) {
+    if (serviceSpeeduinoPacketReadStep(readState)) {
+      if (readState.statusCode != PACKET_STATUS_OK) {
+        readExtraCharsIfAny();
+        return makePacketResult(readState.statusCode);
+      }
+      break;
+    }
+  }
+
+  return finishSpeeduinoPacketRead(readState);
 }
 
 void waitWithBackgroundService(unsigned long durationMs) {
