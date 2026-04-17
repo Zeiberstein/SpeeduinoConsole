@@ -25,7 +25,6 @@ HardwareSerial &speeduinoSerial = Serial1;  // RX1 = 19, TX1 = 18
 constexpr int NUM_DISPLAY_COLS = 20;
 constexpr int NUM_DISPLAY_ROWS = 4;
 constexpr byte MIN_DISPLAY_PAYLOAD_LENGTH = FUEL_PRESSURE + 1;
-constexpr unsigned long BACKGROUND_SERVICE_IDLE_DELAY = 1UL;
 
 struct SpeeduinoPacketResult {
   byte statusCode;
@@ -272,7 +271,6 @@ void serviceBackgroundTasks() {
 
 void idleBackgroundService() {
   serviceBackgroundTasks();
-  delay(BACKGROUND_SERVICE_IDLE_DELAY);
 }
 
 void startSpeeduinoSerialFlush(SpeeduinoSerialFlushState &flushState, unsigned long now) {
