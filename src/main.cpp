@@ -73,6 +73,15 @@ SpeeduinoPacketResult makePacketResult(byte statusCode) {
   return result;
 }
 
+void resetSpeeduinoReadState(SpeeduinoReadState &readState, unsigned long readStart) {
+  readState.phase = SPEEDUINO_READ_PHASE_IDLE;
+  readState.statusCode = PACKET_STATUS_OK;
+  readState.bytesInPacket = 0;
+  readState.expectedPacketSize = -1;
+  readState.hasDiscardedBufferedBytes = false;
+  readState.readStart = readStart;
+}
+
 void resetPacketBuffer() {
   memset(packet, 0, sizeof(packet));
   payloadLength = 0;
@@ -290,7 +299,8 @@ SpeeduinoPacketResult finishSpeeduinoPacketRead(SpeeduinoReadState &readState) {
 }
 
 SpeeduinoPacketResult requestAndReadPacket() {
-  SpeeduinoReadState readState = {SPEEDUINO_READ_PHASE_IDLE, PACKET_STATUS_OK, 0, -1, false, millis()};
+  SpeeduinoReadState readState;
+  resetSpeeduinoReadState(readState, millis());
 
   startSpeeduinoPacketRequest(readState);
 
