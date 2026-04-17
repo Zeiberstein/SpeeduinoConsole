@@ -48,8 +48,16 @@ struct SpeeduinoSnapshot {
   long fuelPressure10;
 };
 
+struct SpeeduinoReadState {
+  int bytesInPacket;
+  int expectedPacketSize;
+  bool hasDiscardedBufferedBytes;
+  unsigned long readStart;
+};
+
 byte packet[MAX_PACKET_SIZE];  // More than enough for the maximum payload plus header.
 byte payloadLength = 0;
+unsigned long lastSpeeduinoPollMillis = 0;
 
 SpeeduinoPacketResult makePacketResult(byte statusCode) {
   SpeeduinoPacketResult result = {statusCode, payloadLength, packet + PAYLOAD_OFFSET};
@@ -220,11 +228,8 @@ bool readExtraCharsIfAny() {
 }
 
 SpeeduinoPacketResult requestAndReadPacket() {
-  int bytesInPacket = 0;
-  int expectedPacketSize = -1;
+  SpeeduinoReadState readState = {0, -1, false, millis()};
   byte incomingByte = 0;
-  bool hasDiscardedBufferedBytes = false;
-  unsigned long readStart = millis();
 
   resetPacketBuffer();
 
@@ -233,7 +238,7 @@ SpeeduinoPacketResult requestAndReadPacket() {
   speeduinoSerial.print("n");
 
   // Read until the expected packet length is complete or the timeout expires.
-  while ((millis() - readStart) < PACKET_READ_TIMEOUT) {
+  while ((millis() - readState.readStart) < PACKET_READ_TIMEOUT) {
     if (speeduinoSerial.available() == 0) {
       idleBackgroundService();
       continue;
@@ -241,31 +246,29 @@ SpeeduinoPacketResult requestAndReadPacket() {
 
     incomingByte = speeduinoSerial.read();
 
-    storeIncomingPacketByte(incomingByte, bytesInPacket);
+    storeIncomingPacketByte(incomingByte, readState.bytesInPacket);
 
-    if (bytesInPacket == HEADER_SIZE) {
-      byte headerStatusCode = validatePacketHeaderAndSetExpectedSize(expectedPacketSize);
+    if (readState.bytesInPacket == HEADER_SIZE) {
+      byte headerStatusCode = validatePacketHeaderAndSetExpectedSize(readState.expectedPacketSize);
       if (headerStatusCode != PACKET_STATUS_OK) {
         readExtraCharsIfAny();
         return makePacketResult(headerStatusCode);
       }
     }
 
-    if (hasCompleteExpectedPacket(bytesInPacket, expectedPacketSize)) {
+    if (hasCompleteExpectedPacket(readState.bytesInPacket, readState.expectedPacketSize)) {
       break;
     }
   }
 
   // Wait a little longer for unexpected trailing bytes and discard them if seen.
-  hasDiscardedBufferedBytes = readExtraCharsIfAny();
+  readState.hasDiscardedBufferedBytes = readExtraCharsIfAny();
 
-  return makePacketResult(packetStatusAfterRead(bytesInPacket, expectedPacketSize, hasDiscardedBufferedBytes));
-}
-
-void waitUntilNextPoll(unsigned long cycleStart) {
-  while( millis() - cycleStart < POLLING_INTERVAL) {
-    idleBackgroundService();
-  }
+  return makePacketResult(packetStatusAfterRead(
+    readState.bytesInPacket,
+    readState.expectedPacketSize,
+    readState.hasDiscardedBufferedBytes
+  ));
 }
 
 void waitWithBackgroundService(unsigned long durationMs) {
@@ -302,6 +305,20 @@ SpeeduinoPacketResult pollSpeeduinoOnce() {
   return packetResult;
 }
 
+bool isSpeeduinoPollDue(unsigned long now) {
+  return (now - lastSpeeduinoPollMillis) >= POLLING_INTERVAL;
+}
+
+void serviceSpeeduinoPoll() {
+  unsigned long now = millis();
+  if (!isSpeeduinoPollDue(now)) {
+    return;
+  }
+
+  lastSpeeduinoPollMillis = now;
+  pollSpeeduinoOnce();
+}
+
 void setup() {
   lcd.begin(NUM_DISPLAY_COLS, NUM_DISPLAY_ROWS);
 
@@ -310,13 +327,10 @@ void setup() {
   lcd.backlight();
   lcd.clear();
   speeduinoSerial.begin(115200);
+  lastSpeeduinoPollMillis = millis() - POLLING_INTERVAL;
 }
 
 void loop() {
-  unsigned long cycleStart = millis();
-
-  pollSpeeduinoOnce();
-
-  waitUntilNextPoll(cycleStart);
-  
+  serviceSpeeduinoPoll();
+  idleBackgroundService();
 }
