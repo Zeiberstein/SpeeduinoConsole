@@ -65,10 +65,6 @@ bool hasValidPacketHeader() {
   return (packet[0] == 'n') && (packet[1] == '2');
 }
 
-bool canPayloadLengthFitPacketBuffer(byte packetPayloadLength) {
-  return HEADER_SIZE + packetPayloadLength <= MAX_PACKET_SIZE;
-}
-
 bool hasMinimumDisplayPayloadLength(byte packetPayloadLength) {
   return packetPayloadLength >= MIN_DISPLAY_PAYLOAD_LENGTH;
 }
@@ -79,9 +75,6 @@ byte validatePacketHeaderAndSetExpectedSize(int &expectedPacketSize) {
   }
 
   payloadLength = packet[2];
-  if (!canPayloadLengthFitPacketBuffer(payloadLength)) {
-    return PACKET_STATUS_OVERFLOW;
-  }
   if (!hasMinimumDisplayPayloadLength(payloadLength)) {
     return PACKET_STATUS_PAYLOAD_TOO_SHORT;
   }
@@ -202,12 +195,21 @@ void renderSpeeduinoSnapshot(const SpeeduinoSnapshot &snapshot) {
   lcdprint(19, 3, " ");
 }
 
+void serviceBackgroundTasks() {
+}
+
+void idleBackgroundService() {
+  serviceBackgroundTasks();
+  delay(BACKGROUND_SERVICE_IDLE_DELAY);
+}
+
 bool readExtraCharsIfAny() {
   unsigned long readStart = millis();
   bool discardedBytes = false;
 
   while ((millis() - readStart) < UNEXPECTED_BYTES_WAITING_INTERVAL) {
     if (speeduinoSerial.available() == 0) {
+      idleBackgroundService();
       continue;
     }
     discardedBytes = true;
@@ -233,6 +235,7 @@ SpeeduinoPacketResult requestAndReadPacket() {
   // Read until the expected packet length is complete or the timeout expires.
   while ((millis() - readStart) < PACKET_READ_TIMEOUT) {
     if (speeduinoSerial.available() == 0) {
+      idleBackgroundService();
       continue;
     }
 
@@ -259,13 +262,9 @@ SpeeduinoPacketResult requestAndReadPacket() {
   return makePacketResult(packetStatusAfterRead(bytesInPacket, expectedPacketSize, hasDiscardedBufferedBytes));
 }
 
-void serviceBackgroundTasks() {
-}
-
 void waitUntilNextPoll(unsigned long cycleStart) {
   while( millis() - cycleStart < POLLING_INTERVAL) {
-    serviceBackgroundTasks();
-    delay(BACKGROUND_SERVICE_IDLE_DELAY);
+    idleBackgroundService();
   }
 }
 

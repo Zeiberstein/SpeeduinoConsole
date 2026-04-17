@@ -35,6 +35,12 @@ Wire the two boards as a crossed serial connection:
 - Speeduino TX3 pin 14 -> helper Arduino RX1 pin 19
 - Speeduino RX3 pin 15 -> helper Arduino TX1 pin 18
 
+The Speeduino and helper Arduino must also share a common ground. This is
+required even when the boards are powered from different sources, such as USB on
+one board and a battery pack on the other. Without a shared ground reference,
+the UART signal levels can float relative to each other and cause intermittent
+packet read errors.
+
 Because of that change, the helper board must be Mega-2560-compatible or another
 board that offers the same hardware serial port in the code. The current PlatformIO
 configuration targets an Arduino Mega 2560.
