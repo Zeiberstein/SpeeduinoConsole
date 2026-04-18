@@ -137,6 +137,9 @@ constexpr byte BIT_ENGINE_DCC          =   5;
 constexpr byte BIT_ENGINE_MAPACC       =   6;
 constexpr byte BIT_ENGINE_MAPDCC       =   7;
 
+constexpr char ENGINE_STATUS_CHARS[] = {'R', 'C', 'A', 'W', 'a', 'd', '<', '>'};
+constexpr byte ENGINE_STATUS_CHAR_COUNT = sizeof(ENGINE_STATUS_CHARS) / sizeof(ENGINE_STATUS_CHARS[0]);
+
 constexpr int TEMPERATURE_OFFSET = 40;
 constexpr unsigned long PACKET_READ_TIMEOUT = 100UL;
 constexpr unsigned long UNEXPECTED_BYTES_WAITING_INTERVAL = 5UL;

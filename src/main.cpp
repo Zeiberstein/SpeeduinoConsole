@@ -33,13 +33,13 @@ HardwareSerial &gpsSerial = Serial2;  // RX2 = 17, TX2 = 16
 constexpr int NUM_DISPLAY_COLS = 20;
 constexpr int NUM_DISPLAY_ROWS = 4;
 constexpr byte MIN_DISPLAY_PAYLOAD_LENGTH = FUEL_PRESSURE + 1;
-constexpr byte GPS_INDICATOR_COL = 7;
-constexpr byte GPS_INDICATOR_ROW = 3;
 constexpr byte GPS_INDICATOR_WIDTH = 13;
 
 #if ENABLE_GPS
 constexpr unsigned long GPS_BAUD_RATE = 9600UL;
 constexpr unsigned long GPS_STALE_INTERVAL = 3000UL;
+constexpr unsigned long GPS_CLOCK_SYNC_INTERVAL = 60000UL;
+constexpr unsigned long GPS_SECONDS_PER_DAY = 86400UL;
 constexpr byte GPS_MAX_BYTES_PER_SERVICE = 32;
 constexpr byte GPS_NMEA_BUFFER_SIZE = 96;
 #endif
@@ -123,11 +123,18 @@ struct GpsState {
   byte utcDay;
   byte utcMonth;
   uint16_t utcYear;
+  byte utcSecond;
   unsigned int speedKmh;
   unsigned long lastSentenceMillis;
   unsigned long lastValidFixMillis;
   char sentence[GPS_NMEA_BUFFER_SIZE];
   byte sentenceLength;
+};
+
+struct GpsClockState {
+  bool hasTime;
+  unsigned long localSecondsOfDay;
+  unsigned long setMillis;
 };
 #endif
 
@@ -139,6 +146,7 @@ unsigned long lastSpeeduinoPollMillis = 0;
 
 #if ENABLE_GPS
 GpsState gpsState;
+GpsClockState gpsClockState;
 #endif
 
 SpeeduinoPacketResult makePacketResult(byte statusCode) {
@@ -155,26 +163,26 @@ void resetSpeeduinoReadState(SpeeduinoReadState &readState, unsigned long readSt
   readState.readStart = readStart;
 }
 
-void resetPacketBuffer() {
+void resetSpeeduinoPacketBuffer() {
   memset(packet, 0, sizeof(packet));
   payloadLength = 0;
 }
 
-bool hasValidPacketHeader() {
+bool hasValidSpeeduinoPacketHeader() {
   return (packet[0] == 'n') && (packet[1] == '2');
 }
 
-bool hasMinimumDisplayPayloadLength(byte packetPayloadLength) {
+bool hasMinimumSpeeduinoDisplayPayloadLength(byte packetPayloadLength) {
   return packetPayloadLength >= MIN_DISPLAY_PAYLOAD_LENGTH;
 }
 
-byte validatePacketHeaderAndSetExpectedSize(int &expectedPacketSize) {
-  if (!hasValidPacketHeader()) {
+byte validateSpeeduinoPacketHeaderAndSetExpectedSize(int &expectedPacketSize) {
+  if (!hasValidSpeeduinoPacketHeader()) {
     return PACKET_STATUS_HEADER_INVALID;
   }
 
   payloadLength = packet[2];
-  if (!hasMinimumDisplayPayloadLength(payloadLength)) {
+  if (!hasMinimumSpeeduinoDisplayPayloadLength(payloadLength)) {
     return PACKET_STATUS_PAYLOAD_TOO_SHORT;
   }
 
@@ -182,29 +190,29 @@ byte validatePacketHeaderAndSetExpectedSize(int &expectedPacketSize) {
   return PACKET_STATUS_OK;
 }
 
-void storeIncomingPacketByte(byte incomingByte, int &bytesInPacket) {
+void storeIncomingSpeeduinoPacketByte(byte incomingByte, int &bytesInPacket) {
   if (bytesInPacket < MAX_PACKET_SIZE) {
     packet[bytesInPacket] = incomingByte;
   }
   bytesInPacket++;
 }
 
-bool hasCompleteExpectedPacket(int bytesInPacket, int expectedPacketSize) {
+bool hasCompleteExpectedSpeeduinoPacket(int bytesInPacket, int expectedPacketSize) {
   return (expectedPacketSize >= HEADER_SIZE) && (bytesInPacket == expectedPacketSize);
 }
 
-bool processIncomingPacketByte(SpeeduinoReadState &readState, byte incomingByte) {
-  storeIncomingPacketByte(incomingByte, readState.bytesInPacket);
+bool processIncomingSpeeduinoPacketByte(SpeeduinoReadState &readState, byte incomingByte) {
+  storeIncomingSpeeduinoPacketByte(incomingByte, readState.bytesInPacket);
 
   if (readState.bytesInPacket == HEADER_SIZE) {
-    readState.statusCode = validatePacketHeaderAndSetExpectedSize(readState.expectedPacketSize);
+    readState.statusCode = validateSpeeduinoPacketHeaderAndSetExpectedSize(readState.expectedPacketSize);
     if (readState.statusCode != PACKET_STATUS_OK) {
       readState.phase = SPEEDUINO_READ_PHASE_DONE;
       return true;
     }
   }
 
-  if (hasCompleteExpectedPacket(readState.bytesInPacket, readState.expectedPacketSize)) {
+  if (hasCompleteExpectedSpeeduinoPacket(readState.bytesInPacket, readState.expectedPacketSize)) {
     readState.statusCode = PACKET_STATUS_OK;
     readState.phase = SPEEDUINO_READ_PHASE_DONE;
     return true;
@@ -213,7 +221,7 @@ bool processIncomingPacketByte(SpeeduinoReadState &readState, byte incomingByte)
   return false;
 }
 
-byte packetStatusAfterRead(int bytesInPacket, int expectedPacketSize, bool hasDiscardedBufferedBytes) {
+byte speeduinoPacketStatusAfterRead(int bytesInPacket, int expectedPacketSize, bool hasDiscardedBufferedBytes) {
   if (bytesInPacket < HEADER_SIZE) {
     return PACKET_STATUS_HEADER_INCOMPLETE;
   }
@@ -251,38 +259,35 @@ SpeeduinoSnapshot decodeSpeeduinoSnapshot(const byte *payload) {
   return snapshot;
 }
 
-void lcdprint(byte col, byte row, int num, const char *fmt) {
-  static char numBuf[21];
-  lcd.setCursor(col, row);
-  snprintf(numBuf, sizeof(numBuf), fmt, num);
-  lcd.print(numBuf);
-}
-
 void lcdprint(byte col, byte row, const char *text) {
   lcd.setCursor(col, row);
   lcd.print(text);
 }
 
+void lcdprint(byte col, byte row, int num, const char *fmt) {
+  static char numBuf[21];
+  snprintf(numBuf, sizeof(numBuf), fmt, num);
+  lcdprint(col, row, numBuf);
+}
+
 void lcdprintTenths(byte col, byte row, int value10, const char *suffix, byte wholeWidth = 2) {
   static char numBuf[21];
-  lcd.setCursor(col, row);
   if (wholeWidth <= 1) {
     snprintf(numBuf, sizeof(numBuf), "%d.%1d%s", value10 / 10, abs(value10) % 10, suffix);
   }
   else {
     snprintf(numBuf, sizeof(numBuf), "%2d.%1d%s", value10 / 10, abs(value10) % 10, suffix);
   }
-  lcd.print(numBuf);
+  lcdprint(col, row, numBuf);
 }
 
 const char *engineStatus(byte status) {
-  static const char statusChars[] = {'R', 'C', 'A', 'W', 'a', 'd', '<', '>'};
   static char buf[7] = {' ', ' ', ' ', ' ', ' ', ' ', '\0'};
   int bufPos = 5;
 
-  for (int bitNr = BIT_ENGINE_RUN; bitNr <= BIT_ENGINE_MAPDCC; bitNr++) {
+  for (byte bitNr = 0; bitNr < ENGINE_STATUS_CHAR_COUNT; bitNr++) {
     if (status & (1 << bitNr)) {
-      buf[bufPos] = statusChars[bitNr];
+      buf[bufPos] = ENGINE_STATUS_CHARS[bitNr];
       bufPos--;
     }
   }
@@ -350,7 +355,7 @@ byte nmeaFieldLength(const char *field) {
   return length;
 }
 
-bool parseGpsUtcTime(const char *field, byte fieldLength, byte &utcHour, byte &utcMinute) {
+bool parseGpsUtcTime(const char *field, byte fieldLength, byte &utcHour, byte &utcMinute, byte &utcSecond) {
   if (fieldLength < 4) {
     return false;
   }
@@ -363,12 +368,22 @@ bool parseGpsUtcTime(const char *field, byte fieldLength, byte &utcHour, byte &u
 
   byte parsedHour = ((field[0] - '0') * 10) + (field[1] - '0');
   byte parsedMinute = ((field[2] - '0') * 10) + (field[3] - '0');
-  if ((parsedHour > 23) || (parsedMinute > 59)) {
+  byte parsedSecond = 0;
+
+  if (fieldLength >= 6) {
+    if (!isDigitChar(field[4]) || !isDigitChar(field[5])) {
+      return false;
+    }
+    parsedSecond = ((field[4] - '0') * 10) + (field[5] - '0');
+  }
+
+  if ((parsedHour > 23) || (parsedMinute > 59) || (parsedSecond > 59)) {
     return false;
   }
 
   utcHour = parsedHour;
   utcMinute = parsedMinute;
+  utcSecond = parsedSecond;
   return true;
 }
 
@@ -441,21 +456,44 @@ bool isCentralEuropeanSummerTimeUtc(byte day, byte month, uint16_t year, byte ho
   return hour < 1;
 }
 
-byte gpsLocalTimeOffsetHours() {
+byte gpsLocalTimeOffsetHours(byte utcHour) {
   if (!gpsState.hasDate) {
     return 0;
   }
 
-  if (isCentralEuropeanSummerTimeUtc(gpsState.utcDay, gpsState.utcMonth, gpsState.utcYear, gpsState.utcHour)) {
+  if (isCentralEuropeanSummerTimeUtc(gpsState.utcDay, gpsState.utcMonth, gpsState.utcYear, utcHour)) {
     return 2;
   }
 
   return 1;
 }
 
-void getGpsDisplayTime(byte &displayHour, byte &displayMinute) {
-  displayHour = (gpsState.utcHour + gpsLocalTimeOffsetHours()) % 24;
-  displayMinute = gpsState.utcMinute;
+void syncGpsClock(byte localHour, byte localMinute, byte localSecond, unsigned long now) {
+  gpsClockState.localSecondsOfDay = (unsigned long)localHour * 3600UL;
+  gpsClockState.localSecondsOfDay += (unsigned long)localMinute * 60UL;
+  gpsClockState.localSecondsOfDay += localSecond;
+  gpsClockState.setMillis = now;
+  gpsClockState.hasTime = true;
+}
+
+unsigned long currentGpsClockLocalSecondsOfDay(unsigned long now) {
+  unsigned long elapsedSeconds = (now - gpsClockState.setMillis) / 1000UL;
+  return (gpsClockState.localSecondsOfDay + elapsedSeconds) % GPS_SECONDS_PER_DAY;
+}
+
+bool shouldSyncGpsClock(unsigned long now) {
+  return !gpsClockState.hasTime || ((now - gpsClockState.setMillis) >= GPS_CLOCK_SYNC_INTERVAL);
+}
+
+bool getGpsDisplayTime(byte &displayHour, byte &displayMinute) {
+  if (!gpsClockState.hasTime) {
+    return false;
+  }
+
+  unsigned long localSecondsOfDay = currentGpsClockLocalSecondsOfDay(millis());
+  displayHour = localSecondsOfDay / 3600UL;
+  displayMinute = (localSecondsOfDay % 3600UL) / 60UL;
+  return true;
 }
 
 unsigned int parseGpsSpeedKmh(const char *field, byte fieldLength) {
@@ -545,16 +583,12 @@ void processGpsRmcSentence(const char *sentence, unsigned long now) {
   }
 
   if (statusField[0] != 'A') {
-    gpsState.hasValidFix = false;
+    // Keep the last valid fix until it becomes stale to avoid display flicker on a single invalid RMC sentence.
     return;
   }
 
   gpsState.hasValidFix = true;
   gpsState.lastValidFixMillis = now;
-
-  if (timeField != nullptr) {
-    parseGpsUtcTime(timeField, nmeaFieldLength(timeField), gpsState.utcHour, gpsState.utcMinute);
-  }
 
   if (dateField != nullptr) {
     gpsState.hasDate = parseGpsDate(
@@ -564,6 +598,21 @@ void processGpsRmcSentence(const char *sentence, unsigned long now) {
       gpsState.utcMonth,
       gpsState.utcYear
     );
+  }
+
+  if (timeField != nullptr) {
+    if (parseGpsUtcTime(
+      timeField,
+      nmeaFieldLength(timeField),
+      gpsState.utcHour,
+      gpsState.utcMinute,
+      gpsState.utcSecond
+    ) && gpsState.hasDate) {
+      byte localHour = (gpsState.utcHour + gpsLocalTimeOffsetHours(gpsState.utcHour)) % 24;
+      if (shouldSyncGpsClock(now)) {
+        syncGpsClock(localHour, gpsState.utcMinute, gpsState.utcSecond, now);
+      }
+    }
   }
 
   if (speedField != nullptr) {
@@ -626,7 +675,11 @@ void setupGps() {
   gpsState.hasReceivedSentence = false;
   gpsState.hasValidFix = false;
   gpsState.hasDate = false;
+  gpsState.utcSecond = 0;
   gpsState.sentenceLength = 0;
+  gpsClockState.hasTime = false;
+  gpsClockState.localSecondsOfDay = 0;
+  gpsClockState.setMillis = 0;
   gpsSerial.begin(GPS_BAUD_RATE);
 }
 #endif
@@ -637,11 +690,12 @@ void renderGpsIndicator() {
 #if ENABLE_GPS
   refreshGpsFixState(millis());
 
-  if (gpsState.fixState == GPS_FIX_VALID) {
+  byte displayHour = 0;
+  byte displayMinute = 0;
+  bool hasDisplayTime = getGpsDisplayTime(displayHour, displayMinute);
+
+  if ((gpsState.fixState == GPS_FIX_VALID) && hasDisplayTime) {
     char text[GPS_INDICATOR_WIDTH + 1];
-    byte displayHour = 0;
-    byte displayMinute = 0;
-    getGpsDisplayTime(displayHour, displayMinute);
     snprintf(
       text,
       sizeof(text),
@@ -650,6 +704,28 @@ void renderGpsIndicator() {
       (unsigned int)displayMinute,
       gpsState.speedKmh
     );
+    copyPaddedText(indicator, GPS_INDICATOR_WIDTH, text);
+  }
+  else if (hasDisplayTime) {
+    char text[GPS_INDICATOR_WIDTH + 1];
+    if ((gpsState.fixState == GPS_FIX_STALE) || (gpsState.fixState == GPS_FIX_NO_DATA_YET)) {
+      snprintf(
+        text,
+        sizeof(text),
+        "%02u:%02u  GPS?",
+        (unsigned int)displayHour,
+        (unsigned int)displayMinute
+      );
+    }
+    else {
+      snprintf(
+        text,
+        sizeof(text),
+        "%02u:%02u",
+        (unsigned int)displayHour,
+        (unsigned int)displayMinute
+      );
+    }
     copyPaddedText(indicator, GPS_INDICATOR_WIDTH, text);
   }
   else if (gpsState.fixState == GPS_FIX_STALE) {
@@ -665,7 +741,7 @@ void renderGpsIndicator() {
   copyPaddedText(indicator, GPS_INDICATOR_WIDTH, "");
 #endif
 
-  lcdprint(GPS_INDICATOR_COL, GPS_INDICATOR_ROW, indicator);
+  lcdprint(7, 3, indicator);
 }
 
 void renderSpeeduinoSnapshot(const SpeeduinoSnapshot &snapshot) {
@@ -716,7 +792,7 @@ bool serviceSpeeduinoPacketReadStep(SpeeduinoReadState &readState) {
     return false;
   }
 
-  return processIncomingPacketByte(readState, speeduinoSerial.read());
+  return processIncomingSpeeduinoPacketByte(readState, speeduinoSerial.read());
 }
 
 void startSpeeduinoPacketRequest(SpeeduinoReadState &readState) {
@@ -729,7 +805,7 @@ void startSpeeduinoPacketRequest(SpeeduinoReadState &readState) {
 SpeeduinoPacketResult makeSpeeduinoPacketResultFromReadState(SpeeduinoReadState &readState) {
   readState.phase = SPEEDUINO_READ_PHASE_DONE;
 
-  return makePacketResult(packetStatusAfterRead(
+  return makePacketResult(speeduinoPacketStatusAfterRead(
     readState.bytesInPacket,
     readState.expectedPacketSize,
     readState.hasDiscardedBufferedBytes
@@ -783,7 +859,7 @@ void completeSpeeduinoPoll(const SpeeduinoPacketResult &packetResult) {
 void startSpeeduinoPoll(unsigned long now) {
   lastSpeeduinoPollMillis = now;
   resetSpeeduinoReadState(speeduinoReadState, now);
-  resetPacketBuffer();
+  resetSpeeduinoPacketBuffer();
   startSpeeduinoSerialFlush(speeduinoPollState.flushState, now);
   speeduinoPollState.phase = SPEEDUINO_POLL_PHASE_FLUSHING_UNWANTED_BYTES;
 }
