@@ -88,9 +88,9 @@ struct SpeeduinoSerialFlushState {
 
 enum SpeeduinoPollPhase {
   SPEEDUINO_POLL_PHASE_IDLE,
-  SPEEDUINO_POLL_PHASE_FLUSHING_STALE_BYTES,
+  SPEEDUINO_POLL_PHASE_FLUSHING_UNWANTED_BYTES,
   SPEEDUINO_POLL_PHASE_READING_PACKET,
-  SPEEDUINO_POLL_PHASE_FLUSHING_TRAILING_BYTES
+  SPEEDUINO_POLL_PHASE_CHECKING_ADDITIONAL_BYTES
 };
 
 enum SpeeduinoPollFinishMode {
@@ -665,8 +665,7 @@ void renderGpsIndicator() {
   copyPaddedText(indicator, GPS_INDICATOR_WIDTH, "");
 #endif
 
-  lcd.setCursor(GPS_INDICATOR_COL, GPS_INDICATOR_ROW);
-  lcd.print(indicator);
+  lcdprint(GPS_INDICATOR_COL, GPS_INDICATOR_ROW, indicator);
 }
 
 void renderSpeeduinoSnapshot(const SpeeduinoSnapshot &snapshot) {
@@ -754,15 +753,12 @@ void waitWithBackgroundService(unsigned long durationMs) {
 }
 
 void showStartupMessages() {
-  lcd.setCursor(0, 0);
-  lcd.print("Inspuiting wordt");
-  lcd.setCursor(0, 1);
-  lcd.print("    op druk gebracht");
+  lcdprint(0, 0, "Inspuiting wordt");
+  lcdprint(0, 1, "    op druk gebracht");
   waitWithBackgroundService(1000);
   lcd.clear();
 
-  lcd.setCursor(0, 0);
-  lcd.print("Lomax is klaar");
+  lcdprint(0, 0, "Lomax is klaar");
   waitWithBackgroundService(500);
 }
 
@@ -789,16 +785,16 @@ void startSpeeduinoPoll(unsigned long now) {
   resetSpeeduinoReadState(speeduinoReadState, now);
   resetPacketBuffer();
   startSpeeduinoSerialFlush(speeduinoPollState.flushState, now);
-  speeduinoPollState.phase = SPEEDUINO_POLL_PHASE_FLUSHING_STALE_BYTES;
+  speeduinoPollState.phase = SPEEDUINO_POLL_PHASE_FLUSHING_UNWANTED_BYTES;
 }
 
-void startSpeeduinoTrailingFlush(SpeeduinoPollFinishMode finishMode, unsigned long now) {
+void startSpeeduinoAdditionalBytesCheck(SpeeduinoPollFinishMode finishMode, unsigned long now) {
   speeduinoPollState.finishMode = finishMode;
   startSpeeduinoSerialFlush(speeduinoPollState.flushState, now);
-  speeduinoPollState.phase = SPEEDUINO_POLL_PHASE_FLUSHING_TRAILING_BYTES;
+  speeduinoPollState.phase = SPEEDUINO_POLL_PHASE_CHECKING_ADDITIONAL_BYTES;
 }
 
-void completeSpeeduinoTrailingFlush() {
+void completeSpeeduinoAdditionalBytesCheck() {
   speeduinoReadState.hasDiscardedBufferedBytes = speeduinoPollState.flushState.hasDiscardedBufferedBytes;
 
   if (speeduinoPollState.finishMode == SPEEDUINO_POLL_FINISH_CURRENT_STATUS) {
@@ -813,7 +809,7 @@ void serviceActiveSpeeduinoPoll() {
   while (speeduinoPollState.phase != SPEEDUINO_POLL_PHASE_IDLE) {
     unsigned long now = millis();
 
-    if (speeduinoPollState.phase == SPEEDUINO_POLL_PHASE_FLUSHING_STALE_BYTES) {
+    if (speeduinoPollState.phase == SPEEDUINO_POLL_PHASE_FLUSHING_UNWANTED_BYTES) {
       if (!serviceSpeeduinoSerialFlush(speeduinoPollState.flushState, now)) {
         return;
       }
@@ -825,7 +821,7 @@ void serviceActiveSpeeduinoPoll() {
 
     if (speeduinoPollState.phase == SPEEDUINO_POLL_PHASE_READING_PACKET) {
       if (hasSpeeduinoPacketReadTimedOut(speeduinoReadState, now)) {
-        startSpeeduinoTrailingFlush(SPEEDUINO_POLL_FINISH_PACKET_STATUS, now);
+        startSpeeduinoAdditionalBytesCheck(SPEEDUINO_POLL_FINISH_PACKET_STATUS, now);
         continue;
       }
 
@@ -835,21 +831,21 @@ void serviceActiveSpeeduinoPoll() {
 
       if (serviceSpeeduinoPacketReadStep(speeduinoReadState)) {
         if (speeduinoReadState.statusCode != PACKET_STATUS_OK) {
-          startSpeeduinoTrailingFlush(SPEEDUINO_POLL_FINISH_CURRENT_STATUS, now);
+          startSpeeduinoAdditionalBytesCheck(SPEEDUINO_POLL_FINISH_CURRENT_STATUS, now);
         }
         else {
-          startSpeeduinoTrailingFlush(SPEEDUINO_POLL_FINISH_PACKET_STATUS, now);
+          startSpeeduinoAdditionalBytesCheck(SPEEDUINO_POLL_FINISH_PACKET_STATUS, now);
         }
         continue;
       }
     }
 
-    if (speeduinoPollState.phase == SPEEDUINO_POLL_PHASE_FLUSHING_TRAILING_BYTES) {
+    if (speeduinoPollState.phase == SPEEDUINO_POLL_PHASE_CHECKING_ADDITIONAL_BYTES) {
       if (!serviceSpeeduinoSerialFlush(speeduinoPollState.flushState, now)) {
         return;
       }
 
-      completeSpeeduinoTrailingFlush();
+      completeSpeeduinoAdditionalBytesCheck();
       return;
     }
   }
