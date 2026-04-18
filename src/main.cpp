@@ -6,6 +6,14 @@
 LiquidCrystal_I2C lcd(0x27, 2, 1, 0, 4, 5, 6, 7, 3, POSITIVE);
 HardwareSerial &speeduinoSerial = Serial1;  // RX1 = 19, TX1 = 18
 
+#ifndef ENABLE_GPS
+#define ENABLE_GPS 1
+#endif
+
+#if ENABLE_GPS
+HardwareSerial &gpsSerial = Serial2;  // RX2 = 17, TX2 = 16
+#endif
+
 // Module for reading Speeduino's serial3 port and displaying it on a 20x4 LCD.
 // This sketch expects the ECU secondary serial protocol to be set to
 // "Generic (Fixed List)" in TunerStudio.
@@ -25,6 +33,16 @@ HardwareSerial &speeduinoSerial = Serial1;  // RX1 = 19, TX1 = 18
 constexpr int NUM_DISPLAY_COLS = 20;
 constexpr int NUM_DISPLAY_ROWS = 4;
 constexpr byte MIN_DISPLAY_PAYLOAD_LENGTH = FUEL_PRESSURE + 1;
+constexpr byte GPS_INDICATOR_COL = 7;
+constexpr byte GPS_INDICATOR_ROW = 3;
+constexpr byte GPS_INDICATOR_WIDTH = 13;
+
+#if ENABLE_GPS
+constexpr unsigned long GPS_BAUD_RATE = 9600UL;
+constexpr unsigned long GPS_STALE_INTERVAL = 3000UL;
+constexpr byte GPS_MAX_BYTES_PER_SERVICE = 32;
+constexpr byte GPS_NMEA_BUFFER_SIZE = 96;
+#endif
 
 struct SpeeduinoPacketResult {
   byte statusCode;
@@ -87,11 +105,41 @@ struct SpeeduinoPollState {
   SpeeduinoPacketResult packetResult;
 };
 
+#if ENABLE_GPS
+enum GpsFixState {
+  GPS_FIX_NO_DATA_YET,
+  GPS_FIX_NO_VALID_FIX,
+  GPS_FIX_STALE,
+  GPS_FIX_VALID
+};
+
+struct GpsState {
+  GpsFixState fixState;
+  bool hasReceivedSentence;
+  bool hasValidFix;
+  bool hasDate;
+  byte utcHour;
+  byte utcMinute;
+  byte utcDay;
+  byte utcMonth;
+  uint16_t utcYear;
+  unsigned int speedKmh;
+  unsigned long lastSentenceMillis;
+  unsigned long lastValidFixMillis;
+  char sentence[GPS_NMEA_BUFFER_SIZE];
+  byte sentenceLength;
+};
+#endif
+
 byte packet[MAX_PACKET_SIZE];  // More than enough for the maximum payload plus header.
 byte payloadLength = 0;
 SpeeduinoReadState speeduinoReadState;
 SpeeduinoPollState speeduinoPollState;
 unsigned long lastSpeeduinoPollMillis = 0;
+
+#if ENABLE_GPS
+GpsState gpsState;
+#endif
 
 SpeeduinoPacketResult makePacketResult(byte statusCode) {
   SpeeduinoPacketResult result = {statusCode, payloadLength, packet + PAYLOAD_OFFSET};
@@ -246,6 +294,381 @@ const char *engineStatus(byte status) {
   return buf;
 }
 
+bool isDigitChar(char c) {
+  return (c >= '0') && (c <= '9');
+}
+
+void copyPaddedText(char *dest, byte width, const char *text) {
+  byte i = 0;
+  while ((i < width) && (text[i] != '\0')) {
+    dest[i] = text[i];
+    i++;
+  }
+
+  while (i < width) {
+    dest[i] = ' ';
+    i++;
+  }
+
+  dest[width] = '\0';
+}
+
+#if ENABLE_GPS
+bool isNmeaType(const char *sentence, const char *type) {
+  return (sentence[0] == '$') &&
+         (sentence[3] == type[0]) &&
+         (sentence[4] == type[1]) &&
+         (sentence[5] == type[2]);
+}
+
+const char *nmeaFieldStart(const char *sentence, byte fieldIndex) {
+  const char *field = sentence;
+  if (*field == '$') {
+    field++;
+  }
+
+  for (byte currentField = 0; currentField < fieldIndex; currentField++) {
+    while ((*field != '\0') && (*field != ',') && (*field != '*')) {
+      field++;
+    }
+
+    if (*field != ',') {
+      return nullptr;
+    }
+
+    field++;
+  }
+
+  return field;
+}
+
+byte nmeaFieldLength(const char *field) {
+  byte length = 0;
+  while ((field[length] != '\0') && (field[length] != ',') && (field[length] != '*')) {
+    length++;
+  }
+  return length;
+}
+
+bool parseGpsUtcTime(const char *field, byte fieldLength, byte &utcHour, byte &utcMinute) {
+  if (fieldLength < 4) {
+    return false;
+  }
+
+  for (byte i = 0; i < 4; i++) {
+    if (!isDigitChar(field[i])) {
+      return false;
+    }
+  }
+
+  byte parsedHour = ((field[0] - '0') * 10) + (field[1] - '0');
+  byte parsedMinute = ((field[2] - '0') * 10) + (field[3] - '0');
+  if ((parsedHour > 23) || (parsedMinute > 59)) {
+    return false;
+  }
+
+  utcHour = parsedHour;
+  utcMinute = parsedMinute;
+  return true;
+}
+
+bool parseGpsDate(const char *field, byte fieldLength, byte &utcDay, byte &utcMonth, uint16_t &utcYear) {
+  if (fieldLength < 6) {
+    return false;
+  }
+
+  for (byte i = 0; i < 6; i++) {
+    if (!isDigitChar(field[i])) {
+      return false;
+    }
+  }
+
+  byte parsedDay = ((field[0] - '0') * 10) + (field[1] - '0');
+  byte parsedMonth = ((field[2] - '0') * 10) + (field[3] - '0');
+  uint16_t parsedYear = 2000U + (((field[4] - '0') * 10) + (field[5] - '0'));
+
+  if ((parsedDay < 1) || (parsedDay > 31) || (parsedMonth < 1) || (parsedMonth > 12)) {
+    return false;
+  }
+
+  utcDay = parsedDay;
+  utcMonth = parsedMonth;
+  utcYear = parsedYear;
+  return true;
+}
+
+byte dayOfWeek(byte day, byte month, uint16_t year) {
+  static const byte monthOffsets[] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
+
+  if (month < 3) {
+    year--;
+  }
+
+  return (year + (year / 4) - (year / 100) + (year / 400) + monthOffsets[month - 1] + day) % 7;
+}
+
+byte lastSundayOfMonth(byte month, uint16_t year) {
+  return 31 - dayOfWeek(31, month, year);
+}
+
+bool isCentralEuropeanSummerTimeUtc(byte day, byte month, uint16_t year, byte hour) {
+  if ((month < 3) || (month > 10)) {
+    return false;
+  }
+
+  if ((month > 3) && (month < 10)) {
+    return true;
+  }
+
+  byte lastSunday = lastSundayOfMonth(month, year);
+
+  if (month == 3) {
+    if (day < lastSunday) {
+      return false;
+    }
+    if (day > lastSunday) {
+      return true;
+    }
+    return hour >= 1;
+  }
+
+  if (day < lastSunday) {
+    return true;
+  }
+  if (day > lastSunday) {
+    return false;
+  }
+  return hour < 1;
+}
+
+byte gpsLocalTimeOffsetHours() {
+  if (!gpsState.hasDate) {
+    return 0;
+  }
+
+  if (isCentralEuropeanSummerTimeUtc(gpsState.utcDay, gpsState.utcMonth, gpsState.utcYear, gpsState.utcHour)) {
+    return 2;
+  }
+
+  return 1;
+}
+
+void getGpsDisplayTime(byte &displayHour, byte &displayMinute) {
+  displayHour = (gpsState.utcHour + gpsLocalTimeOffsetHours()) % 24;
+  displayMinute = gpsState.utcMinute;
+}
+
+unsigned int parseGpsSpeedKmh(const char *field, byte fieldLength) {
+  unsigned long knots100 = 0;
+  byte decimals = 0;
+  bool hasDigit = false;
+  bool decimalSeen = false;
+
+  for (byte i = 0; i < fieldLength; i++) {
+    char c = field[i];
+    if (c == '.') {
+      decimalSeen = true;
+      continue;
+    }
+
+    if (!isDigitChar(c)) {
+      break;
+    }
+
+    if (!decimalSeen) {
+      knots100 = (knots100 * 10UL) + (c - '0');
+      hasDigit = true;
+      continue;
+    }
+
+    if (decimals < 2) {
+      knots100 = (knots100 * 10UL) + (c - '0');
+      decimals++;
+      hasDigit = true;
+    }
+  }
+
+  if (!hasDigit) {
+    return 0;
+  }
+
+  if (!decimalSeen) {
+    knots100 *= 100UL;
+  }
+  else {
+    while (decimals < 2) {
+      knots100 *= 10UL;
+      decimals++;
+    }
+  }
+
+  unsigned long kmh = ((knots100 * 1852UL) + 50000UL) / 100000UL;
+  if (kmh > 999UL) {
+    return 999;
+  }
+
+  return (unsigned int)kmh;
+}
+
+void refreshGpsFixState(unsigned long now) {
+  if (!gpsState.hasReceivedSentence) {
+    gpsState.fixState = GPS_FIX_NO_DATA_YET;
+    return;
+  }
+
+  if ((now - gpsState.lastSentenceMillis) > GPS_STALE_INTERVAL) {
+    gpsState.fixState = GPS_FIX_STALE;
+    return;
+  }
+
+  if (!gpsState.hasValidFix) {
+    gpsState.fixState = GPS_FIX_NO_VALID_FIX;
+    return;
+  }
+
+  if ((now - gpsState.lastValidFixMillis) > GPS_STALE_INTERVAL) {
+    gpsState.fixState = GPS_FIX_STALE;
+    return;
+  }
+
+  gpsState.fixState = GPS_FIX_VALID;
+}
+
+void processGpsRmcSentence(const char *sentence, unsigned long now) {
+  const char *timeField = nmeaFieldStart(sentence, 1);
+  const char *statusField = nmeaFieldStart(sentence, 2);
+  const char *speedField = nmeaFieldStart(sentence, 7);
+  const char *dateField = nmeaFieldStart(sentence, 9);
+
+  if ((statusField == nullptr) || (nmeaFieldLength(statusField) == 0)) {
+    return;
+  }
+
+  if (statusField[0] != 'A') {
+    gpsState.hasValidFix = false;
+    return;
+  }
+
+  gpsState.hasValidFix = true;
+  gpsState.lastValidFixMillis = now;
+
+  if (timeField != nullptr) {
+    parseGpsUtcTime(timeField, nmeaFieldLength(timeField), gpsState.utcHour, gpsState.utcMinute);
+  }
+
+  if (dateField != nullptr) {
+    gpsState.hasDate = parseGpsDate(
+      dateField,
+      nmeaFieldLength(dateField),
+      gpsState.utcDay,
+      gpsState.utcMonth,
+      gpsState.utcYear
+    );
+  }
+
+  if (speedField != nullptr) {
+    gpsState.speedKmh = parseGpsSpeedKmh(speedField, nmeaFieldLength(speedField));
+  }
+}
+
+void processGpsSentence(const char *sentence, unsigned long now) {
+  gpsState.hasReceivedSentence = true;
+  gpsState.lastSentenceMillis = now;
+
+  if (isNmeaType(sentence, "RMC")) {
+    processGpsRmcSentence(sentence, now);
+  }
+
+  refreshGpsFixState(now);
+}
+
+void processGpsChar(char incomingChar, unsigned long now) {
+  if (incomingChar == '$') {
+    gpsState.sentenceLength = 0;
+  }
+
+  if ((incomingChar == '\r') || (incomingChar == '\n')) {
+    if (gpsState.sentenceLength > 0) {
+      gpsState.sentence[gpsState.sentenceLength] = '\0';
+      processGpsSentence(gpsState.sentence, now);
+      gpsState.sentenceLength = 0;
+    }
+    return;
+  }
+
+  if ((gpsState.sentenceLength == 0) && (incomingChar != '$')) {
+    return;
+  }
+
+  if (gpsState.sentenceLength >= (GPS_NMEA_BUFFER_SIZE - 1)) {
+    gpsState.sentenceLength = 0;
+    return;
+  }
+
+  gpsState.sentence[gpsState.sentenceLength] = incomingChar;
+  gpsState.sentenceLength++;
+}
+
+void serviceGps() {
+  unsigned long now = millis();
+  byte processedBytes = 0;
+
+  while ((gpsSerial.available() > 0) && (processedBytes < GPS_MAX_BYTES_PER_SERVICE)) {
+    processGpsChar((char)gpsSerial.read(), now);
+    processedBytes++;
+  }
+
+  refreshGpsFixState(millis());
+}
+
+void setupGps() {
+  gpsState.fixState = GPS_FIX_NO_DATA_YET;
+  gpsState.hasReceivedSentence = false;
+  gpsState.hasValidFix = false;
+  gpsState.hasDate = false;
+  gpsState.sentenceLength = 0;
+  gpsSerial.begin(GPS_BAUD_RATE);
+}
+#endif
+
+void renderGpsIndicator() {
+  char indicator[GPS_INDICATOR_WIDTH + 1];
+
+#if ENABLE_GPS
+  refreshGpsFixState(millis());
+
+  if (gpsState.fixState == GPS_FIX_VALID) {
+    char text[GPS_INDICATOR_WIDTH + 1];
+    byte displayHour = 0;
+    byte displayMinute = 0;
+    getGpsDisplayTime(displayHour, displayMinute);
+    snprintf(
+      text,
+      sizeof(text),
+      "%02u:%02u %3ukm/h",
+      (unsigned int)displayHour,
+      (unsigned int)displayMinute,
+      gpsState.speedKmh
+    );
+    copyPaddedText(indicator, GPS_INDICATOR_WIDTH, text);
+  }
+  else if (gpsState.fixState == GPS_FIX_STALE) {
+    copyPaddedText(indicator, GPS_INDICATOR_WIDTH, "GPS?");
+  }
+  else if (gpsState.fixState == GPS_FIX_NO_VALID_FIX) {
+    copyPaddedText(indicator, GPS_INDICATOR_WIDTH, "");
+  }
+  else {
+    copyPaddedText(indicator, GPS_INDICATOR_WIDTH, "GPS?");
+  }
+#else
+  copyPaddedText(indicator, GPS_INDICATOR_WIDTH, "");
+#endif
+
+  lcd.setCursor(GPS_INDICATOR_COL, GPS_INDICATOR_ROW);
+  lcd.print(indicator);
+}
+
 void renderSpeeduinoSnapshot(const SpeeduinoSnapshot &snapshot) {
   lcdprint(0, 0, snapshot.rpm, "%4drpm ");
   lcdprint(8, 0, snapshot.advance, "%3d\xDF ");  // The HD44780 LCD expects 0xDF for the degree symbol.
@@ -261,12 +684,13 @@ void renderSpeeduinoSnapshot(const SpeeduinoSnapshot &snapshot) {
   lcdprintTenths(8, 2, snapshot.battery10, "V ");
   lcdprint(14, 2, engineStatus(snapshot.engineStatusBits));
 
-  lcdprintTenths(0, 3, snapshot.fuelPressure10, "bar            ", 1);
-
-  lcdprint(19, 3, " ");
+  lcdprintTenths(0, 3, snapshot.fuelPressure10, "bar ", 1);
 }
 
 void serviceBackgroundTasks() {
+#if ENABLE_GPS
+  serviceGps();
+#endif
 }
 
 void idleBackgroundService() {
@@ -346,8 +770,10 @@ void renderSpeeduinoPacketResult(const SpeeduinoPacketResult &packetResult) {
   if (packetResult.statusCode == PACKET_STATUS_OK) {
     SpeeduinoSnapshot snapshot = decodeSpeeduinoSnapshot(packetResult.payload);
     renderSpeeduinoSnapshot(snapshot);
+    renderGpsIndicator();
   }
   else {
+    renderGpsIndicator();
     lcdprint(19, 3, packetResult.statusCode, "%1d");
   }
 }
@@ -450,6 +876,10 @@ void serviceSpeeduinoPoll() {
 
 void setup() {
   lcd.begin(NUM_DISPLAY_COLS, NUM_DISPLAY_ROWS);
+
+#if ENABLE_GPS
+  setupGps();
+#endif
 
   showStartupMessages();
 
