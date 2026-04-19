@@ -1,4 +1,5 @@
 #include <Arduino.h>
+#include <EEPROM.h>
 #include <LiquidCrystal_I2C.h>
 #include <SpeeduinoProtocol.h>
 #include <string.h>
@@ -40,8 +41,18 @@ constexpr unsigned long GPS_BAUD_RATE = 9600UL;
 constexpr unsigned long GPS_STALE_INTERVAL = 3000UL;
 constexpr unsigned long GPS_CLOCK_SYNC_INTERVAL = 60000UL;
 constexpr unsigned long GPS_SECONDS_PER_DAY = 86400UL;
+constexpr unsigned long GPS_TIMEZONE_ADJUST_ARM_INTERVAL = 20000UL;
+constexpr unsigned long GPS_TIMEZONE_ADJUST_IDLE_SAVE_INTERVAL = 10000UL;
+constexpr unsigned long GPS_TIMEZONE_FASTEST_STEP_INTERVAL = 500UL;
+constexpr unsigned long GPS_TIMEZONE_SLOWEST_STEP_INTERVAL = 3000UL;
 constexpr byte GPS_MAX_BYTES_PER_SERVICE = 32;
 constexpr byte GPS_NMEA_BUFFER_SIZE = 96;
+constexpr byte GPS_TIMEZONE_EEPROM_VALUE_ADDRESS = 0;
+constexpr byte GPS_TIMEZONE_OFFSET_STEPS = 24;
+constexpr byte GPS_TIMEZONE_DEFAULT_OFFSET_HOURS = 2;
+constexpr byte TPS_TIMEZONE_RELEASED_THRESHOLD = 20;
+constexpr byte TPS_TIMEZONE_ADJUST_THRESHOLD = 100;
+constexpr byte TPS_TIMEZONE_PRESSED_THRESHOLD = 190;
 #endif
 
 struct SpeeduinoPacketResult {
@@ -117,12 +128,8 @@ struct GpsState {
   GpsFixState fixState;
   bool hasReceivedSentence;
   bool hasValidFix;
-  bool hasDate;
   byte utcHour;
   byte utcMinute;
-  byte utcDay;
-  byte utcMonth;
-  uint16_t utcYear;
   byte utcSecond;
   unsigned int speedKmh;
   unsigned long lastSentenceMillis;
@@ -136,6 +143,18 @@ struct GpsClockState {
   unsigned long localSecondsOfDay;
   unsigned long setMillis;
 };
+
+struct GpsTimezoneAdjustmentState {
+  bool hasSeenReleasedTps;
+  bool isArming;
+  bool isAdjusting;
+  bool isPressed;
+  bool hasPendingSave;
+  byte offsetHours;
+  unsigned long holdStartMillis;
+  unsigned long lastStepMillis;
+  unsigned long idleStartMillis;
+};
 #endif
 
 byte packet[MAX_PACKET_SIZE];  // More than enough for the maximum payload plus header.
@@ -147,6 +166,7 @@ unsigned long lastSpeeduinoPollMillis = 0;
 #if ENABLE_GPS
 GpsState gpsState;
 GpsClockState gpsClockState;
+GpsTimezoneAdjustmentState gpsTimezoneAdjustmentState;
 #endif
 
 SpeeduinoPacketResult makePacketResult(byte statusCode) {
@@ -387,85 +407,29 @@ bool parseGpsUtcTime(const char *field, byte fieldLength, byte &utcHour, byte &u
   return true;
 }
 
-bool parseGpsDate(const char *field, byte fieldLength, byte &utcDay, byte &utcMonth, uint16_t &utcYear) {
-  if (fieldLength < 6) {
-    return false;
+void loadGpsTimezoneOffset() {
+  byte storedOffsetHours = EEPROM.read(GPS_TIMEZONE_EEPROM_VALUE_ADDRESS);
+  if (storedOffsetHours >= GPS_TIMEZONE_OFFSET_STEPS) {
+    storedOffsetHours = GPS_TIMEZONE_DEFAULT_OFFSET_HOURS;
+    EEPROM.update(GPS_TIMEZONE_EEPROM_VALUE_ADDRESS, storedOffsetHours);
   }
 
-  for (byte i = 0; i < 6; i++) {
-    if (!isDigitChar(field[i])) {
-      return false;
-    }
-  }
-
-  byte parsedDay = ((field[0] - '0') * 10) + (field[1] - '0');
-  byte parsedMonth = ((field[2] - '0') * 10) + (field[3] - '0');
-  uint16_t parsedYear = 2000U + (((field[4] - '0') * 10) + (field[5] - '0'));
-
-  if ((parsedDay < 1) || (parsedDay > 31) || (parsedMonth < 1) || (parsedMonth > 12)) {
-    return false;
-  }
-
-  utcDay = parsedDay;
-  utcMonth = parsedMonth;
-  utcYear = parsedYear;
-  return true;
+  gpsTimezoneAdjustmentState.offsetHours = storedOffsetHours;
 }
 
-byte dayOfWeek(byte day, byte month, uint16_t year) {
-  static const byte monthOffsets[] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
-
-  if (month < 3) {
-    year--;
-  }
-
-  return (year + (year / 4) - (year / 100) + (year / 400) + monthOffsets[month - 1] + day) % 7;
+void saveGpsTimezoneOffset() {
+  EEPROM.update(
+    GPS_TIMEZONE_EEPROM_VALUE_ADDRESS,
+    gpsTimezoneAdjustmentState.offsetHours
+  );
 }
 
-byte lastSundayOfMonth(byte month, uint16_t year) {
-  return 31 - dayOfWeek(31, month, year);
+byte gpsEffectiveTimeOffsetHours() {
+  return gpsTimezoneAdjustmentState.offsetHours;
 }
 
-bool isCentralEuropeanSummerTimeUtc(byte day, byte month, uint16_t year, byte hour) {
-  if ((month < 3) || (month > 10)) {
-    return false;
-  }
-
-  if ((month > 3) && (month < 10)) {
-    return true;
-  }
-
-  byte lastSunday = lastSundayOfMonth(month, year);
-
-  if (month == 3) {
-    if (day < lastSunday) {
-      return false;
-    }
-    if (day > lastSunday) {
-      return true;
-    }
-    return hour >= 1;
-  }
-
-  if (day < lastSunday) {
-    return true;
-  }
-  if (day > lastSunday) {
-    return false;
-  }
-  return hour < 1;
-}
-
-byte gpsLocalTimeOffsetHours(byte utcHour) {
-  if (!gpsState.hasDate) {
-    return 0;
-  }
-
-  if (isCentralEuropeanSummerTimeUtc(gpsState.utcDay, gpsState.utcMonth, gpsState.utcYear, utcHour)) {
-    return 2;
-  }
-
-  return 1;
+byte gpsHourWithOffset(byte utcHour, byte offsetHours) {
+  return (utcHour + offsetHours) % 24;
 }
 
 void syncGpsClock(byte localHour, byte localMinute, byte localSecond, unsigned long now) {
@@ -483,6 +447,15 @@ unsigned long currentGpsClockLocalSecondsOfDay(unsigned long now) {
 
 bool shouldSyncGpsClock(unsigned long now) {
   return !gpsClockState.hasTime || ((now - gpsClockState.setMillis) >= GPS_CLOCK_SYNC_INTERVAL);
+}
+
+void shiftGpsClockHours(byte deltaHours, unsigned long now) {
+  unsigned long localSecondsOfDay = currentGpsClockLocalSecondsOfDay(now);
+  unsigned long shiftedSeconds = (localSecondsOfDay + ((unsigned long)deltaHours * 3600UL)) % GPS_SECONDS_PER_DAY;
+
+  gpsClockState.localSecondsOfDay = shiftedSeconds;
+  gpsClockState.setMillis = now;
+  gpsClockState.hasTime = true;
 }
 
 bool getGpsDisplayTime(byte &displayHour, byte &displayMinute) {
@@ -576,7 +549,6 @@ void processGpsRmcSentence(const char *sentence, unsigned long now) {
   const char *timeField = nmeaFieldStart(sentence, 1);
   const char *statusField = nmeaFieldStart(sentence, 2);
   const char *speedField = nmeaFieldStart(sentence, 7);
-  const char *dateField = nmeaFieldStart(sentence, 9);
 
   if ((statusField == nullptr) || (nmeaFieldLength(statusField) == 0)) {
     return;
@@ -590,16 +562,6 @@ void processGpsRmcSentence(const char *sentence, unsigned long now) {
   gpsState.hasValidFix = true;
   gpsState.lastValidFixMillis = now;
 
-  if (dateField != nullptr) {
-    gpsState.hasDate = parseGpsDate(
-      dateField,
-      nmeaFieldLength(dateField),
-      gpsState.utcDay,
-      gpsState.utcMonth,
-      gpsState.utcYear
-    );
-  }
-
   if (timeField != nullptr) {
     if (parseGpsUtcTime(
       timeField,
@@ -607,8 +569,8 @@ void processGpsRmcSentence(const char *sentence, unsigned long now) {
       gpsState.utcHour,
       gpsState.utcMinute,
       gpsState.utcSecond
-    ) && gpsState.hasDate) {
-      byte localHour = (gpsState.utcHour + gpsLocalTimeOffsetHours(gpsState.utcHour)) % 24;
+    )) {
+      byte localHour = gpsHourWithOffset(gpsState.utcHour, gpsEffectiveTimeOffsetHours());
       if (shouldSyncGpsClock(now)) {
         syncGpsClock(localHour, gpsState.utcMinute, gpsState.utcSecond, now);
       }
@@ -674,13 +636,161 @@ void setupGps() {
   gpsState.fixState = GPS_FIX_NO_DATA_YET;
   gpsState.hasReceivedSentence = false;
   gpsState.hasValidFix = false;
-  gpsState.hasDate = false;
   gpsState.utcSecond = 0;
   gpsState.sentenceLength = 0;
   gpsClockState.hasTime = false;
   gpsClockState.localSecondsOfDay = 0;
   gpsClockState.setMillis = 0;
+  gpsTimezoneAdjustmentState.hasSeenReleasedTps = false;
+  gpsTimezoneAdjustmentState.isArming = false;
+  gpsTimezoneAdjustmentState.isAdjusting = false;
+  gpsTimezoneAdjustmentState.isPressed = false;
+  gpsTimezoneAdjustmentState.hasPendingSave = false;
+  gpsTimezoneAdjustmentState.holdStartMillis = 0;
+  gpsTimezoneAdjustmentState.lastStepMillis = 0;
+  gpsTimezoneAdjustmentState.idleStartMillis = 0;
+  loadGpsTimezoneOffset();
   gpsSerial.begin(GPS_BAUD_RATE);
+}
+
+void resetGpsTimezoneAdjustmentArming() {
+  gpsTimezoneAdjustmentState.isArming = false;
+  gpsTimezoneAdjustmentState.holdStartMillis = 0;
+}
+
+void startGpsTimezoneAdjustment(unsigned long now) {
+  gpsTimezoneAdjustmentState.isAdjusting = true;
+  gpsTimezoneAdjustmentState.isPressed = true;
+  gpsTimezoneAdjustmentState.hasPendingSave = false;
+  gpsTimezoneAdjustmentState.lastStepMillis = now;
+  gpsTimezoneAdjustmentState.idleStartMillis = 0;
+  resetGpsTimezoneAdjustmentArming();
+}
+
+void stopGpsTimezoneAdjustment(bool saveCorrection) {
+  if (saveCorrection && gpsTimezoneAdjustmentState.hasPendingSave) {
+    saveGpsTimezoneOffset();
+  }
+
+  gpsTimezoneAdjustmentState.isAdjusting = false;
+  gpsTimezoneAdjustmentState.isPressed = false;
+  gpsTimezoneAdjustmentState.hasPendingSave = false;
+  gpsTimezoneAdjustmentState.idleStartMillis = 0;
+  resetGpsTimezoneAdjustmentArming();
+}
+
+void stepGpsTimezoneForward(unsigned long now) {
+  gpsTimezoneAdjustmentState.offsetHours = (gpsTimezoneAdjustmentState.offsetHours + 1) % GPS_TIMEZONE_OFFSET_STEPS;
+  gpsTimezoneAdjustmentState.hasPendingSave = true;
+  gpsTimezoneAdjustmentState.lastStepMillis = now;
+  shiftGpsClockHours(1, now);
+}
+
+unsigned long gpsTimezoneStepInterval(byte tps) {
+  if (tps <= TPS_TIMEZONE_ADJUST_THRESHOLD) {
+    return GPS_TIMEZONE_SLOWEST_STEP_INTERVAL;
+  }
+
+  if (tps > 200) {
+    tps = 200;
+  }
+
+  return GPS_TIMEZONE_FASTEST_STEP_INTERVAL + (25UL * (200UL - tps));
+}
+
+bool canArmGpsTimezoneAdjustment(const SpeeduinoSnapshot &snapshot) {
+  return gpsTimezoneAdjustmentState.hasSeenReleasedTps &&
+         gpsClockState.hasTime &&
+         (gpsState.fixState == GPS_FIX_VALID) &&
+         (snapshot.rpm == 0);
+}
+
+void serviceActiveGpsTimezoneAdjustment(const SpeeduinoSnapshot &snapshot, unsigned long now) {
+  if ((snapshot.rpm != 0) || !gpsClockState.hasTime) {
+    stopGpsTimezoneAdjustment(false);
+    return;
+  }
+
+  if (snapshot.tps <= TPS_TIMEZONE_RELEASED_THRESHOLD) {
+    gpsTimezoneAdjustmentState.hasSeenReleasedTps = true;
+  }
+
+  if (snapshot.tps <= TPS_TIMEZONE_ADJUST_THRESHOLD) {
+    if (gpsTimezoneAdjustmentState.isPressed) {
+      gpsTimezoneAdjustmentState.isPressed = false;
+      gpsTimezoneAdjustmentState.idleStartMillis = now;
+    }
+
+    if ((now - gpsTimezoneAdjustmentState.idleStartMillis) >= GPS_TIMEZONE_ADJUST_IDLE_SAVE_INTERVAL) {
+      stopGpsTimezoneAdjustment(true);
+    }
+    return;
+  }
+
+  if (!gpsTimezoneAdjustmentState.isPressed) {
+    gpsTimezoneAdjustmentState.isPressed = true;
+    gpsTimezoneAdjustmentState.lastStepMillis = now;
+    gpsTimezoneAdjustmentState.idleStartMillis = 0;
+    return;
+  }
+
+  if ((now - gpsTimezoneAdjustmentState.lastStepMillis) >= gpsTimezoneStepInterval(snapshot.tps)) {
+    stepGpsTimezoneForward(now);
+  }
+}
+
+void serviceGpsTimezoneAdjustment(const SpeeduinoSnapshot &snapshot, unsigned long now) {
+  refreshGpsFixState(now);
+
+  if (gpsTimezoneAdjustmentState.isAdjusting) {
+    serviceActiveGpsTimezoneAdjustment(snapshot, now);
+    return;
+  }
+
+  if (snapshot.tps <= TPS_TIMEZONE_RELEASED_THRESHOLD) {
+    gpsTimezoneAdjustmentState.hasSeenReleasedTps = true;
+  }
+
+  if (!canArmGpsTimezoneAdjustment(snapshot) || (snapshot.tps < TPS_TIMEZONE_PRESSED_THRESHOLD)) {
+    resetGpsTimezoneAdjustmentArming();
+    return;
+  }
+
+  if (!gpsTimezoneAdjustmentState.isArming) {
+    gpsTimezoneAdjustmentState.isArming = true;
+    gpsTimezoneAdjustmentState.holdStartMillis = now;
+    return;
+  }
+
+  if ((now - gpsTimezoneAdjustmentState.holdStartMillis) >= GPS_TIMEZONE_ADJUST_ARM_INTERVAL) {
+    startGpsTimezoneAdjustment(now);
+  }
+}
+
+bool isGpsTimezoneAdjustmentActive() {
+  return gpsTimezoneAdjustmentState.isAdjusting;
+}
+
+void renderGpsTimezoneAdjustmentIndicator(char *indicator) {
+  byte displayHour = 0;
+  byte displayMinute = 0;
+  if (!getGpsDisplayTime(displayHour, displayMinute)) {
+    copyPaddedText(indicator, GPS_INDICATOR_WIDTH, "");
+    return;
+  }
+
+  byte effectiveOffsetHours = gpsEffectiveTimeOffsetHours();
+
+  char text[GPS_INDICATOR_WIDTH + 1];
+  snprintf(
+    text,
+    sizeof(text),
+    "UTC+%02u %02u:%02u",
+    (unsigned int)effectiveOffsetHours,
+    (unsigned int)displayHour,
+    (unsigned int)displayMinute
+  );
+  copyPaddedText(indicator, GPS_INDICATOR_WIDTH, text);
 }
 #endif
 
@@ -689,6 +799,12 @@ void renderGpsIndicator() {
 
 #if ENABLE_GPS
   refreshGpsFixState(millis());
+
+  if (isGpsTimezoneAdjustmentActive()) {
+    renderGpsTimezoneAdjustmentIndicator(indicator);
+    lcdprint(7, 3, indicator);
+    return;
+  }
 
   byte displayHour = 0;
   byte displayMinute = 0;
@@ -841,6 +957,9 @@ void showStartupMessages() {
 void renderSpeeduinoPacketResult(const SpeeduinoPacketResult &packetResult) {
   if (packetResult.statusCode == PACKET_STATUS_OK) {
     SpeeduinoSnapshot snapshot = decodeSpeeduinoSnapshot(packetResult.payload);
+#if ENABLE_GPS
+    serviceGpsTimezoneAdjustment(snapshot, millis());
+#endif
     renderSpeeduinoSnapshot(snapshot);
     renderGpsIndicator();
   }
