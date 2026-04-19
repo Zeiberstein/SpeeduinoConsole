@@ -1,5 +1,4 @@
 #include <Arduino.h>
-#include <EEPROM.h>
 #include <LiquidCrystal_I2C.h>
 #include <SpeeduinoProtocol.h>
 #include <string.h>
@@ -12,6 +11,8 @@ HardwareSerial &speeduinoSerial = Serial1;  // RX1 = 19, TX1 = 18
 #endif
 
 #if ENABLE_GPS
+#include <EEPROM.h>
+
 HardwareSerial &gpsSerial = Serial2;  // RX2 = 17, TX2 = 16
 #endif
 
